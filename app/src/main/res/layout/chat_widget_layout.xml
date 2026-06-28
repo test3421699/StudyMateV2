@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_gradient_background"
+    android:padding="12dp">
+
+    <!-- Top Bar with Icon & Action button -->
+    <RelativeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp">
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:layout_alignParentStart="true"
+            android:layout_centerVertical="true">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="✨ Gemini AI Chat"
+                android:textColor="#FFFFFF"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Actions layout on the right -->
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_alignParentEnd="true"
+            android:layout_centerVertical="true"
+            android:gravity="center_vertical">
+
+            <TextView
+                android:id="@+id/widget_chat_refresh"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="🔄 Refresh"
+                android:textColor="#8E75FF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:paddingLeft="6dp"
+                android:paddingRight="6dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:layout_marginEnd="6dp"
+                android:background="@drawable/widget_card_background" />
+
+            <TextView
+                android:id="@+id/widget_chat_go_to_app"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="📱 Go to App"
+                android:textColor="#FFFFFF"
+                android:textSize="10sp"
+                android:textStyle="bold"
+                android:paddingLeft="6dp"
+                android:paddingRight="6dp"
+                android:paddingTop="4dp"
+                android:paddingBottom="4dp"
+                android:background="@drawable/widget_accent_pill" />
+        </LinearLayout>
+    </RelativeLayout>
+
+    <!-- Chat Bubbler Response display -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:orientation="vertical"
+        android:background="@drawable/widget_card_background"
+        android:padding="10dp"
+        android:layout_marginBottom="8dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="LAST AI INSIGHT / STUDY TIP:"
+            android:textColor="#8E75FF"
+            android:textSize="8sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/widget_chat_response"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:layout_marginTop="4dp"
+            android:text="Welcome! Ask me anything, or tap 'Refresh Tip' above to get a customized, expert daily study tip compiled in real-time by Google Gemini!"
+            android:textColor="#E5E4FF"
+            android:textSize="11sp"
+            android:maxLines="8"
+            android:ellipsize="end"
+            android:lineSpacingExtra="2sp" />
+    </LinearLayout>
+
+    <!-- Mimic Prompt Search/Query box -->
+    <LinearLayout
+        android:id="@+id/widget_input_mimic_btn"
+        android:layout_width="match_parent"
+        android:layout_height="28dp"
+        android:orientation="horizontal"
+        android:background="@drawable/widget_input_mimic"
+        android:gravity="center_vertical"
+        android:paddingLeft="12dp"
+        android:paddingRight="12dp">
+
+        <TextView
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Ask Gemini anything..."
+            android:textColor="#8C8CA6"
+            android:textSize="11sp" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="🚀"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+</LinearLayout>

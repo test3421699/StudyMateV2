@@ -1,0 +1,8 @@
+{
+  "name": "StudyMate Pro 2",
+  "description": "Premium multi-featured academic organizer featuring an AI Homework Helper, in-app notes storage and visual document viewer, intelligent Flashcard and Quiz generator, comprehensive Study Planner with notification alerts, task manager, and study streak tracking with progress calendar.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
