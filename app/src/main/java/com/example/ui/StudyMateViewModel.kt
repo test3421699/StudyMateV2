@@ -1434,8 +1434,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                         blocks.add(TextBlock(currentTextLines.joinToString("\n")))
                         currentTextLines.clear()
                     }
-                    
-                    blocks.add(HtmlDiagramBlock(blockText))
+                    // Simply avoid [diagram] blocks
                     i = j + 1
                     continue
                 }
@@ -3609,17 +3608,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     - Render the output in beautiful, standard raw Markdown formatting. Use nested headings of all levels ('#', '##', '###', '####') for elegant structure, '**bold**' for key words, '*' or '-' for bullet points, and numbered lists where sequential steps are mentioned.
                     - MATH / LATEX SUPPORT: You MUST format all mathematical formulas, scientific equations, chemical reactions, and technical/numeric expressions in clean LaTeX delimiters. Use centered block equations wrapped in '$' (e.g., ${'$'}${'$'}E = mc^2${'$'}${'$'}) for major formulas, and inline expressions wrapped in '${'$'}' (e.g., ${'$'}f(x) = \sin(x)${'$'}) for inline variables or expressions.
                     - TABLES SUPPORT: Use standard Markdown table syntax (e.g. '| Header | Header |' with separator rows) to present structured comparisons, classifications, scientific variables, data properties, or historical timelines wherever helpful and logical.
-                    - DIAGRAMS / VISUAL REPRESENTATIONS SUPPORT: Whenever a process, hierarchy, flow, sequence, system architecture, or relationship between concepts is explained, you MUST represent it visually using standard, beautifully-styled pure HTML and CSS! Render the HTML/CSS code in a standard markdown code block with the language label 'html', and prepend the line `[diagram]` right after the opening triple-backticks to identify it as a diagram for the app. Keep the HTML visual, modern, colorful, eye-catching, and beautifully styled with embedded inline styles (e.g. styled cards, grids, flex containers, arrows, columns). For example:
-                      ```html
-                      [diagram]
-                      <div style="background-color: #2c1e73; padding: 16px; border-radius: 8px; border: 1.5px solid #8e75ff; color: white; display: inline-block;">
-                         <div style="font-weight: bold; font-size: 14px; margin-bottom: 4px;">1. Input Data</div>
-                         <div style="color: #8e75ff; font-size: 16px; margin: 4px 0;">➔</div>
-                         <div style="font-weight: bold; font-size: 14px;">2. Processing</div>
-                      </div>
-                      ```
-                      Always provide both this HTML diagram block and a corresponding textual explanation.
-                    - Never lose any technical detail, formula, diagram explanation, or historical context.
+                    - Never lose any technical detail, formula, or historical context.
                     
                     1. Summary Length Mode: $lengthMode
                        - CONCISE: Keep it highly structured with bullet points. Cover all essential concepts comprehensively.

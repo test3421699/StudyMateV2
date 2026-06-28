@@ -1630,29 +1630,11 @@ fun NotebooksTab(viewModel: StudyMateViewModel) {
             }
         }
 
-        val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
-        
-        OutlinedTextField(
-            value = searchQuery,
-            onValueChange = { viewModel.searchQuery.value = it },
-            placeholder = { Text("Search files, flashcards, quizzes, and notes...", style = MaterialTheme.typography.bodyMedium) },
-            leadingIcon = { Icon(Icons.Default.Search, contentDescription = "Search Icon", modifier = Modifier.size(20.dp)) },
-            trailingIcon = {
-                if (searchQuery.isNotEmpty()) {
-                    IconButton(onClick = { viewModel.searchQuery.value = "" }) {
-                        Icon(Icons.Default.Clear, contentDescription = "Clear Search", modifier = Modifier.size(18.dp))
-                    }
-                }
-            },
-            singleLine = true,
-            textStyle = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 0.dp)
-                .height(64.dp)
-                .testTag("global_search_bar"),
-            shape = RoundedCornerShape(24.dp)
-        )
+        LaunchedEffect(Unit) {
+            viewModel.searchQuery.value = ""
+        }
+
+        Spacer(modifier = Modifier.height(8.dp))
 
         when (activeSubTab) {
             "Files" -> NotesFolderSection(viewModel) { mode -> activeViewMode = mode }
@@ -2662,43 +2644,7 @@ data class EditableDiagram(
 )
 
 fun parseDiagramsFromContent(content: String): List<EditableDiagram> {
-    val list = mutableListOf<EditableDiagram>()
-    val lines = content.lines()
-    var i = 0
-    var diagId = 1
-    while (i < lines.size) {
-        val line = lines[i].trim()
-        if (line.startsWith("```")) {
-            var j = i + 1
-            val blockLines = mutableListOf<String>()
-            while (j < lines.size && !lines[j].trim().startsWith("```")) {
-                blockLines.add(lines[j])
-                j++
-            }
-            val blockText = blockLines.joinToString("\n")
-            val isDiagram = line.startsWith("```html") || 
-                            line.startsWith("```xml") || 
-                            line.startsWith("```svg") || 
-                            line.startsWith("```css") || 
-                            blockText.contains("[diagram]")
-            
-            if (isDiagram) {
-                val endLine = if (j < lines.size) lines[j] else "```"
-                val entireBlock = (listOf(lines[i]) + blockLines + listOf(endLine)).joinToString("\n")
-                
-                var cleanHtml = blockText.trim()
-                if (cleanHtml.startsWith("[diagram]")) {
-                    cleanHtml = cleanHtml.replace("[diagram]", "").trim()
-                }
-                
-                list.add(EditableDiagram(diagId++, entireBlock, cleanHtml))
-            }
-            i = j + 1
-        } else {
-            i++
-        }
-    }
-    return list
+    return emptyList()
 }
 
 fun replaceDiagramInContent(originalContent: String, diagram: EditableDiagram, newHtmlCode: String): String {
@@ -5665,23 +5611,20 @@ fun buildHtmlCodeBlock(language: String, lines: List<String>): String {
         .replace("&gt;", ">")
         .replace("&amp;", "&")
 
-    val isHtmlDiagram = decodedContent.contains("[diagram]") || 
-                        language.lowercase().contains("html") && decodedContent.contains("[diagram]") ||
-                        language.lowercase().contains("diagram") ||
-                        language.lowercase().contains("svg") ||
+    // If it contains [diagram] or is marked as a diagram language, simply avoid / ignore it
+    if (decodedContent.contains("[diagram]") || language.lowercase().contains("diagram")) {
+        return ""
+    }
+
+    val isHtmlDiagram = language.lowercase().contains("svg") ||
                         language.lowercase().contains("xml") ||
                         decodedContent.trim().startsWith("<svg")
 
     if (isHtmlDiagram) {
-        var cleanHtml = decodedContent
-        if (cleanHtml.contains("[diagram]")) {
-            cleanHtml = cleanHtml.replace("[diagram]", "").trim()
-        }
-        
         return """
             <div class="html-diagram-container" style="width:100%; max-width:100%; margin:20px 0; border-radius:12px; background-color:#1A1348; border:1.5px solid #8E75FF; padding:20px; box-sizing:border-box; display:flex; justify-content:center; align-items:center; overflow-x:auto; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
                 <div style="width:100%; text-align:center;">
-                    $cleanHtml
+                    $decodedContent
                 </div>
             </div>
         """.trimIndent()
