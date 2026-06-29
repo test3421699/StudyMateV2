@@ -46,7 +46,8 @@ data class QuizQuestion(
     val optionsString: String, // Concatenated with "||"
     val correctAnswer: String,
     val userAnswer: String? = null,
-    val isCorrect: Boolean? = null
+    val isCorrect: Boolean? = null,
+    val questionType: String = "MCQ" // "MCQ" or "MSQ"
 ) {
     val optionsList: List<String>
         get() = optionsString.split("||").filter { it.isNotBlank() }

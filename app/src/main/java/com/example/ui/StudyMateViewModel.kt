@@ -28,10 +28,8 @@ import org.json.JSONObject
 import org.json.JSONArray
 import java.text.SimpleDateFormat
 import java.util.*
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
@@ -3136,33 +3134,8 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 } else null
 
                 if (pdfPath != null && contentToSummarize.isBlank()) {
-                    contentToSummarize = "Analyze this PDF file and construct choice questions."
+                    contentToSummarize = "Analyze this PDF file and construct academic questions."
                 }
-
-                val systemPrompt = """
-                    You are an AI Quiz Generator. Generate a high-quality multiple-choice quiz based strictly and entirely on the provided academic text/image content.
-                    CRITICAL RULE: Analyze the provided study material and formulate questions and choices EXCLUSIVELY covering that specific material.
-                    
-                    STRICT DIRECTIVE ON QUESTION QUALITY:
-                    - NEVER ask meta-questions, reference section numbers, chapter headers, figure numbers, or table numbers (e.g., DO NOT ask: 'What is mentioned in section 1.2?', 'According to figure 2...', 'What is the example given in section 1.2?', 'What is described on page 5?').
-                    - Formulate direct, self-contained educational/academic questions about the actual scientific, historical, mathematical, or literary concepts described.
-                    - Example: If the material discusses ATP production in Mitochondria in Section 2, ask: 'Which molecule is the main chemical energy currency of the cell?' rather than 'What is discussed as an example in section 2?'.
-                    
-                    MATH/LATEX SUPPORT:
-                    - You can use LaTeX math formatting for technical equations, math formulas, chemical notation, and expressions (e.g. \frac{a}{b}, \sqrt{x}, ^2, _1, Greek symbols like \alpha, \beta, etc.) inside questions or options. The app automatically compiles and formats them elegantly for readers!
-                    
-                    DO NOT use the 5 x 5 math example topic or create questions about unrelated generic math unless the provided material is actually about that math topic. 
-                    Only use the following formatting style: Use '[Q]' directly before each question. Use '[A]' directly before the CORRECT option. Use '[O]' directly before each other alternative INCORRECT options. Please provide exactly 4 options per question (1 correct and 3 incorrect). Do not add bullet points.
-                    
-                    Format style example (only for structure, do not copy this math topic unless the provided material is actually about math):
-                    [Q] What is 5 x 5?
-                    [A] 25
-                    [O] 20
-                    [O] 30
-                    [O] 35
-                """.trimIndent()
-
-                val parsedQuestions = mutableListOf<QuizQuestion>()
 
                 if (base64Images != null && base64Images.isNotEmpty()) {
                     withContext(Dispatchers.Main) {
@@ -3170,9 +3143,52 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                 }
 
-                val responseText = executeWithFallback { apiKey ->
+                val finalQuestions = executeWithFallback<List<QuizQuestion>> { apiKey ->
+                    val systemPrompt = """
+                        You are an AI Quiz Generator. Generate a high-quality academic quiz based strictly and entirely on the provided academic text/image content.
+                        
+                        CRITICAL COUNT RULE:
+                        - You MUST generate EXACTLY $targetCount questions in total. Count them meticulously. Do not generate even one question more or less than $targetCount.
+                        - Stop generating immediately once you have written the last part of the $targetCount-th question.
+                        
+                        STRICT DIRECTIVE ON QUESTION QUALITY:
+                        - NEVER ask meta-questions, reference section numbers, chapter headers, figure numbers, or table numbers.
+                        - Formulate direct, self-contained educational/academic questions about the actual scientific, historical, mathematical, or literary concepts described.
+                        
+                        MATH/LATEX SUPPORT:
+                        - You can use LaTeX math formatting for technical equations, math formulas, chemical notation inside questions or options (e.g. \frac{a}{b}, \sqrt{x}).
+                        
+                        QUESTION TYPES SUPPORT (MCQ, MSQ, and INT):
+                        - Generate a balanced mix of:
+                          1. MCQ (Single-Select Multiple Choice): Exactly 1 correct option marked with '[A]' and 3 incorrect options marked with '[O]'.
+                          2. MSQ (Multiple-Select): 2 or 3 correct options marked with '[A]' and remaining incorrect options marked with '[O]' (exactly 4 options in total).
+                          3. INT (Integer-type): A question where the user types a single rounded integer as the answer. Format the correct answer as '[INT] correct_integer' (e.g. [INT] 42, [INT] -10). Do NOT generate '[A]' or '[O]' options for INT questions.
+                        
+                        FORMAT EXAMPLES:
+                        
+                        Example MCQ:
+                        [Q] What is the primary organelle responsible for ATP production in eukaryotic cells?
+                        [A] Mitochondria
+                        [O] Nucleus
+                        [O] Ribosome
+                        [O] Lysosome
+                        
+                        Example MSQ:
+                        [Q] Which of the following are primary colors of light?
+                        [A] Red
+                        [A] Blue
+                        [A] Green
+                        [O] Yellow
+                        
+                        Example INT:
+                        [Q] If a circle has a radius of 3, what is its area rounded to the nearest integer? (Use pi = 3.14)
+                        [INT] 28
+                        
+                        DO NOT include any conversational filler, introduction, explanation, or markdown formatting outside the [Q], [A], [O], [INT] blocks. Start directly with the first [Q] block and end immediately after the last option/answer of the $targetCount-th question.
+                    """.trimIndent()
+
                     val parts = mutableListOf<GeminiPart>()
-                    parts.add(GeminiPart(text = "Source context: $contentToSummarize\n\nPlease construct a high-quality, comprehensive multiple choice quiz with exactly $targetCount questions based strictly on the uploaded source context. Ensure questions cover important terms, formulas, and concepts."))
+                    parts.add(GeminiPart(text = "Source context: $contentToSummarize\n\nPlease construct a high-quality, comprehensive academic quiz containing EXACTLY $targetCount questions based strictly on the source context. Do not exceed the target count of $targetCount questions!"))
                     if (base64Images != null) {
                         for (base64Image in base64Images) {
                             parts.add(GeminiPart(inlineData = GeminiInlineData(mimeType = "image/jpeg", data = base64Image)))
@@ -3184,69 +3200,86 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                             GeminiContent(listOf(GeminiPart(text = systemPrompt))),
                             GeminiContent(parts)
                         ),
-                        generationConfig = GeminiGenerationConfig(temperature = 0.5f)
+                        generationConfig = GeminiGenerationConfig(temperature = 0.15f)
                     )
-                    GeminiNetwork.api.generateContent(apiKey, request).candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
+
+                    val responseText = GeminiNetwork.api.generateContent(apiKey, request).candidates?.firstOrNull()?.content?.parts?.firstOrNull()?.text
                         ?: throw Exception("No AI response gathered.")
-                }
 
-                // Parse using specific symbols: '[Q]', '[A]', and '[O]'
-                val lines = responseText.lines()
-                var currentQ = ""
-                var correctOpt = ""
-                val wrongOpts = mutableListOf<String>()
+                    // Parse response
+                    val lines = responseText.lines()
+                    val parsedQuestions = mutableListOf<QuizQuestion>()
+                    var currentQ = ""
+                    val correctOpts = mutableListOf<String>()
+                    val wrongOpts = mutableListOf<String>()
+                    var intAnswer = ""
+                    var currentType = "MCQ"
 
-                for (line in lines) {
-                    val trimmed = line.trim()
-                    if (trimmed.startsWith("[Q]")) {
-                        if (currentQ.isNotBlank() && correctOpt.isNotBlank() && wrongOpts.isNotEmpty()) {
-                            val options = (listOf(correctOpt) + wrongOpts).shuffled()
-                            parsedQuestions.add(
-                                QuizQuestion(
-                                    quizSetId = 0,
-                                    question = currentQ,
-                                    optionsString = options.joinToString("||"),
-                                    correctAnswer = correctOpt
+                    fun addCurrentQuestion() {
+                        if (currentQ.isNotBlank()) {
+                            if (currentType == "INT" && intAnswer.isNotBlank()) {
+                                parsedQuestions.add(
+                                    QuizQuestion(
+                                        quizSetId = 0,
+                                        question = currentQ,
+                                        optionsString = "",
+                                        correctAnswer = intAnswer,
+                                        questionType = "INT"
+                                    )
                                 )
-                            )
+                            } else if (correctOpts.isNotEmpty() && (correctOpts.size + wrongOpts.size >= 2)) {
+                                val isMSQ = correctOpts.size > 1
+                                val options = (correctOpts + wrongOpts).shuffled()
+                                parsedQuestions.add(
+                                    QuizQuestion(
+                                        quizSetId = 0,
+                                        question = currentQ,
+                                        optionsString = options.joinToString("||"),
+                                        correctAnswer = correctOpts.joinToString("||"),
+                                        questionType = if (isMSQ) "MSQ" else "MCQ"
+                                    )
+                                )
+                            }
                         }
-                        currentQ = trimmed.substring(3).trim()
-                        correctOpt = ""
-                        wrongOpts.clear()
-                    } else if (trimmed.startsWith("[A]")) {
-                        correctOpt = trimmed.substring(3).trim()
-                    } else if (trimmed.startsWith("[O]")) {
-                        wrongOpts.add(trimmed.substring(3).trim())
                     }
-                }
 
-                // Add trailing
-                if (currentQ.isNotBlank() && correctOpt.isNotBlank() && wrongOpts.isNotEmpty()) {
-                    val options = (listOf(correctOpt) + wrongOpts).shuffled()
-                    parsedQuestions.add(
-                        QuizQuestion(
-                            quizSetId = 0,
-                            question = currentQ,
-                            optionsString = options.joinToString("||"),
-                            correctAnswer = correctOpt
-                        )
-                    )
-                }
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("[Q]")) {
+                            addCurrentQuestion()
+                            currentQ = trimmed.substring(3).trim()
+                            correctOpts.clear()
+                            wrongOpts.clear()
+                            intAnswer = ""
+                            currentType = "MCQ"
+                        } else if (trimmed.startsWith("[A]")) {
+                            correctOpts.add(trimmed.substring(3).trim())
+                        } else if (trimmed.startsWith("[O]")) {
+                            wrongOpts.add(trimmed.substring(3).trim())
+                        } else if (trimmed.startsWith("[INT]")) {
+                            intAnswer = trimmed.substring(5).trim()
+                            currentType = "INT"
+                        }
+                    }
+                    addCurrentQuestion()
 
-                if (parsedQuestions.isNotEmpty()) {
-                    val finalQuizQuestions = if (parsedQuestions.size > targetCount) {
+                    // Ensure targetCount hard limit is strictly respected
+                    if (parsedQuestions.size > targetCount) {
                         parsedQuestions.take(targetCount)
                     } else {
                         parsedQuestions
                     }
+                }
+
+                if (finalQuestions.isNotEmpty()) {
                     val quizId = dao.insertQuizSet(QuizSet(title = title)).toInt()
-                    val finalQuestions = finalQuizQuestions.map { it.copy(quizSetId = quizId) }
-                    dao.insertQuizQuestions(finalQuestions)
+                    val savedQuestions = finalQuestions.map { it.copy(quizSetId = quizId) }
+                    dao.insertQuizQuestions(savedQuestions)
 
                     showResultNotification(
                         isSuccess = true,
                         title = "Quiz Generation Success",
-                        message = "Successfully created '$title' quiz with ${finalQuestions.size} questions."
+                        message = "Successfully created '$title' quiz with ${savedQuestions.size} questions."
                     )
                 } else {
                     throw Exception("Could not parse options successfully. Ensure input contains explicit paragraphs.")
@@ -4835,7 +4868,8 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                                 optionsString = obj.optString("optionsString", ""),
                                 correctAnswer = obj.optString("correctAnswer", ""),
                                 userAnswer = obj.optString("userAnswer", "").takeIf { it.isNotEmpty() },
-                                isCorrect = if (obj.has("isCorrect")) obj.optBoolean("isCorrect", false) else null
+                                isCorrect = if (obj.has("isCorrect")) obj.optBoolean("isCorrect", false) else null,
+                                questionType = obj.optString("questionType", "MCQ")
                             ))
                         }
                     }

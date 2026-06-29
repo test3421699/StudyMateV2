@@ -3833,11 +3833,30 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
     val prefs = remember(quizSet.id) { context.getSharedPreferences("QuizProgress_${quizSet.id}", Context.MODE_PRIVATE) }
 
     var currentIndex by remember { mutableStateOf(0) }
-    var selectedOption by remember { mutableStateOf<String?>(null) }
+    var selectedOptions by remember { mutableStateOf(emptySet<String>()) }
     var isSubmitted by remember { mutableStateOf(false) }
     var quizMode by remember(quizSet.id) { mutableStateOf(prefs.getString("quiz_mode", null)) } // "PRACTICE" or "EXAM"
     val answersMap = remember { mutableStateMapOf<Int, String?>() }
     var hasInitializedProgress by remember(quizSet.id) { mutableStateOf(false) }
+
+    fun isAnswerCorrect(userAnswer: String?, correctAnswer: String, questionType: String = "MCQ"): Boolean {
+        if (userAnswer == null) return false
+        if (questionType == "INT") {
+            val userClean = userAnswer.trim().replace(Regex("[^0-9\\-]"), "")
+            val correctClean = correctAnswer.trim().replace(Regex("[^0-9\\-]"), "")
+            if (userClean.isNotBlank() && correctClean.isNotBlank()) {
+                val userInt = userClean.toIntOrNull()
+                val correctInt = correctClean.toIntOrNull()
+                if (userInt != null && correctInt != null) {
+                    return userInt == correctInt
+                }
+            }
+            return userAnswer.trim().equals(correctAnswer.trim(), ignoreCase = true)
+        }
+        val userSet = userAnswer.split("||").filter { it.isNotBlank() }.map { it.trim() }.toSet()
+        val correctSet = correctAnswer.split("||").filter { it.isNotBlank() }.map { it.trim() }.toSet()
+        return userSet == correctSet
+    }
 
     var secondsSpent by remember(currentIndex, quizMode) { mutableStateOf(prefs.getInt("time_spent_$currentIndex", 0)) }
 
@@ -3984,9 +4003,10 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
             var skippedCount = 0
             questions.forEachIndexed { idx, q ->
                 val userAns = answersMap[idx]
+                val isCorrect = isAnswerCorrect(userAns, q.correctAnswer, q.questionType)
                 if (userAns == null) {
                     skippedCount++
-                } else if (userAns == q.correctAnswer) {
+                } else if (isCorrect) {
                     correctCount++
                 } else {
                     wrongCount++
@@ -4070,7 +4090,7 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                 questions.forEachIndexed { idx, q ->
                     val userAns = answersMap[idx]
                     val corrAns = q.correctAnswer
-                    val isCorrect = userAns == corrAns
+                    val isCorrect = isAnswerCorrect(userAns, corrAns, q.questionType)
 
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -4091,12 +4111,21 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                             }
                             
                             Text(q.question, fontSize = 14.sp)
+                            
+                            // Question type marked below the qn
+                            Text(
+                                text = if (q.questionType == "MSQ") "☑ Multiple Select Question (Select all correct options)" else "🔘 Multiple Choice Question (Select one option)",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.secondary,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
 
                             Spacer(modifier = Modifier.height(1.dp).fillMaxWidth().background(MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)))
 
                             q.optionsList.forEach { option ->
-                                val isSelectedOption = option == userAns
-                                val isCorrectChoice = option == corrAns
+                                val isSelectedOption = userAns?.split("||")?.contains(option) == true
+                                val isCorrectChoice = corrAns.split("||").contains(option)
                                 
                                 val textBackground = if (isCorrectChoice) {
                                     Color(0xFFE8F5E9)
@@ -4122,7 +4151,11 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                                 ) {
                                     Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                                         Icon(
-                                            imageVector = if (isCorrectChoice) Icons.Default.CheckCircle else if (isSelectedOption) Icons.Default.Cancel else Icons.Default.RadioButtonUnchecked,
+                                            imageVector = if (q.questionType == "MSQ") {
+                                                if (isCorrectChoice) Icons.Default.CheckBox else if (isSelectedOption) Icons.Default.CheckBox else Icons.Default.CheckBoxOutlineBlank
+                                            } else {
+                                                if (isCorrectChoice) Icons.Default.CheckCircle else if (isSelectedOption) Icons.Default.Cancel else Icons.Default.RadioButtonUnchecked
+                                            },
                                             contentDescription = null,
                                             tint = if (isCorrectChoice) Color(0xFF2E7D32) else if (isSelectedOption) Color(0xFFC62828) else Color.Gray,
                                             modifier = Modifier.size(16.dp)
@@ -4140,7 +4173,7 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                                     .padding(12.dp)
                             ) {
                                 Text(
-                                    text = "💡 Study Solution Details:\nThe correct response is \"$corrAns\". Study material validates this concept directly. Analyze incorrect options to secure marks.",
+                                    text = "💡 Study Solution Details:\nThe correct response is \"${corrAns.replace("||", ", ")}\". Study material validates this concept directly. Analyze incorrect options to secure marks.",
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                     style = MaterialTheme.typography.bodySmall
@@ -4170,7 +4203,7 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                         viewModel.resetQuizProgress(quizSet.id)
                         prefs.edit().clear().apply()
                         currentIndex = 0
-                        selectedOption = null
+                        selectedOptions = emptySet()
                         isSubmitted = false
                         answersMap.clear()
                         quizMode = null
@@ -4190,7 +4223,7 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                 val userAns = answersMap[i]
                 if (userAns != null) {
                     val ques = questions[i]
-                    if (userAns == ques.correctAnswer) {
+                    if (isAnswerCorrect(userAns, ques.correctAnswer, ques.questionType)) {
                         currentScoreIter += 4
                     } else {
                         currentScoreIter -= 1
@@ -4256,50 +4289,116 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                     )
                 }
 
-                // Display options
-                q.optionsList.forEach { option ->
-                    val isCorrectValue = option == q.correctAnswer
-                    val btnColors = if (quizMode == "PRACTICE" && isSubmitted) {
-                        if (isCorrectValue) {
-                            ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32), contentColor = Color.White)
-                        } else if (selectedOption == option) {
-                            ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828), contentColor = Color.White)
-                        } else {
-                            ButtonDefaults.outlinedButtonColors()
-                        }
-                    } else {
-                        if (selectedOption == option) {
-                            ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
-                        } else {
-                            ButtonDefaults.outlinedButtonColors()
-                        }
-                    }
+                // Question type marked below the qn
+                Text(
+                    text = when (q.questionType) {
+                        "MSQ" -> "☑ Multiple Select Question (Select all correct options)"
+                        "INT" -> "🔢 Integer Answer Question (Type a rounded integer)"
+                        else -> "🔘 Multiple Choice Question (Select one option)"
+                    },
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(horizontal = 4.dp)
+                )
 
-                    Button(
-                        onClick = { if (quizMode != "PRACTICE" || !isSubmitted) selectedOption = option },
+                if (q.questionType == "INT") {
+                    var typedText by remember(currentIndex) { 
+                        mutableStateOf(selectedOptions.firstOrNull() ?: "") 
+                    }
+                    
+                    OutlinedTextField(
+                        value = typedText,
+                        onValueChange = { input ->
+                            val filtered = input.filterIndexed { index, char ->
+                                char.isDigit() || (char == '-' && index == 0)
+                            }
+                            typedText = filtered
+                            selectedOptions = if (filtered.isNotBlank()) setOf(filtered) else emptySet()
+                        },
+                        label = { Text("Your Integer Answer") },
+                        placeholder = { Text("e.g. 42") },
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Number
+                        ),
+                        singleLine = true,
                         modifier = Modifier
                             .fillMaxWidth()
-                            .testTag("quiz_option_${option.take(15)}"),
-                        colors = btnColors,
-                        border = if (quizMode == "PRACTICE" && isSubmitted) null else if (selectedOption != option) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(4.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                            .testTag("quiz_int_input")
+                            .padding(vertical = 8.dp),
+                        enabled = quizMode != "PRACTICE" || !isSubmitted,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline
+                        )
+                    )
+                } else {
+                    // Display options
+                    q.optionsList.forEach { option ->
+                        val isSelectedOption = selectedOptions.contains(option)
+                        val isCorrectValue = q.correctAnswer.split("||").contains(option)
+                        val btnColors = if (quizMode == "PRACTICE" && isSubmitted) {
+                            if (isCorrectValue) {
+                                ButtonDefaults.buttonColors(containerColor = Color(0xFF2E7D32), contentColor = Color.White)
+                            } else if (isSelectedOption) {
+                                ButtonDefaults.buttonColors(containerColor = Color(0xFFC62828), contentColor = Color.White)
+                            } else {
+                                ButtonDefaults.outlinedButtonColors()
+                            }
+                        } else {
+                            if (isSelectedOption) {
+                                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+                            } else {
+                                ButtonDefaults.outlinedButtonColors()
+                            }
+                        }
+
+                        Button(
+                            onClick = { 
+                                if (quizMode != "PRACTICE" || !isSubmitted) {
+                                    if (q.questionType == "MSQ") {
+                                        selectedOptions = if (isSelectedOption) selectedOptions - option else selectedOptions + option
+                                    } else {
+                                        selectedOptions = setOf(option)
+                                    }
+                                }
+                            },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("quiz_option_${option.take(15)}"),
+                            colors = btnColors,
+                            border = if (quizMode == "PRACTICE" && isSubmitted) null else if (!isSelectedOption) BorderStroke(1.dp, MaterialTheme.colorScheme.outline) else null,
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Icon(
-                                imageVector = if (quizMode == "PRACTICE" && isSubmitted && isCorrectValue) Icons.Default.CheckCircle else if (quizMode == "PRACTICE" && isSubmitted && selectedOption == option) Icons.Default.Cancel else Icons.Default.RadioButtonUnchecked,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(12.dp))
-                            LatexText(text = option, fontSizeSp = 14)
+                            Row(
+                                modifier = Modifier.fillMaxWidth().padding(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = if (q.questionType == "MSQ") {
+                                        if (quizMode == "PRACTICE" && isSubmitted && isCorrectValue) Icons.Default.CheckBox
+                                        else if (quizMode == "PRACTICE" && isSubmitted && isSelectedOption) Icons.Default.CheckBox
+                                        else if (isSelectedOption) Icons.Default.CheckBox
+                                        else Icons.Default.CheckBoxOutlineBlank
+                                    } else {
+                                        if (quizMode == "PRACTICE" && isSubmitted && isCorrectValue) Icons.Default.CheckCircle
+                                        else if (quizMode == "PRACTICE" && isSubmitted && isSelectedOption) Icons.Default.Cancel
+                                        else if (isSelectedOption) Icons.Default.CheckCircle
+                                        else Icons.Default.RadioButtonUnchecked
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(12.dp))
+                                LatexText(text = option, fontSizeSp = 14)
+                            }
                         }
                     }
                 }
 
                 if (quizMode == "PRACTICE" && isSubmitted) {
+                    val answerStr = selectedOptions.joinToString("||")
+                    val isCorr = isAnswerCorrect(answerStr, q.correctAnswer, q.questionType)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -4309,8 +4408,8 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text("💡 Study Solution Summary", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary, fontSize = 14.sp)
                             Text(
-                                text = "Correct explanation: \"${q.correctAnswer}\". " +
-                                       if (selectedOption == q.correctAnswer) "Superb response! You gained +4 Marks." else "Incorrect choice selected. You lost -1 Mark.",
+                                text = "Correct explanation: \"${q.correctAnswer.replace("||", ", ")}\". " +
+                                       if (isCorr) "Superb response! You gained +4 Marks." else "Incorrect response. You lost -1 Mark.",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSecondaryContainer
                             )
@@ -4330,7 +4429,7 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
                             viewModel.submitQuizResponse(q.id, "__SKIPPED__", false)
                             answersMap[currentIndex] = null
                             currentIndex++
-                            selectedOption = null
+                            selectedOptions = emptySet()
                             isSubmitted = false
                         },
                         modifier = Modifier.weight(1f).height(50.dp),
@@ -4342,26 +4441,28 @@ fun QuizGameplayViewer(viewModel: StudyMateViewModel, quizSet: QuizSet, onBack: 
 
                     Button(
                         onClick = {
+                            val answerStr = selectedOptions.joinToString("||")
+                            val isCorr = isAnswerCorrect(answerStr, q.correctAnswer, q.questionType)
                             if (quizMode == "PRACTICE") {
                                 if (!isSubmitted) {
                                     isSubmitted = true
-                                    answersMap[currentIndex] = selectedOption
-                                    viewModel.submitQuizResponse(q.id, selectedOption ?: "", selectedOption == q.correctAnswer)
+                                    answersMap[currentIndex] = answerStr
+                                    viewModel.submitQuizResponse(q.id, answerStr, isCorr)
                                 } else {
                                     currentIndex++
-                                    selectedOption = null
+                                    selectedOptions = emptySet()
                                     isSubmitted = false
                                 }
                             } else {
-                                answersMap[currentIndex] = selectedOption
-                                viewModel.submitQuizResponse(q.id, selectedOption ?: "", selectedOption == q.correctAnswer)
+                                answersMap[currentIndex] = answerStr
+                                viewModel.submitQuizResponse(q.id, answerStr, isCorr)
                                 currentIndex++
-                                selectedOption = null
+                                selectedOptions = emptySet()
                                 isSubmitted = false
                             }
                         },
                         modifier = Modifier.weight(1.3f).height(50.dp),
-                        enabled = selectedOption != null
+                        enabled = selectedOptions.isNotEmpty()
                     ) {
                         val label = if (quizMode == "PRACTICE") {
                             if (isSubmitted) "Next Question" else "Check Answer"
