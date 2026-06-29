@@ -3263,12 +3263,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     addCurrentQuestion()
 
-                    // Ensure targetCount hard limit is strictly respected
-                    if (parsedQuestions.size > targetCount) {
-                        parsedQuestions.take(targetCount)
-                    } else {
-                        parsedQuestions
-                    }
+                    parsedQuestions
                 }
 
                 if (finalQuestions.isNotEmpty()) {
