@@ -3234,8 +3234,13 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 if (parsedQuestions.isNotEmpty()) {
+                    val finalQuizQuestions = if (parsedQuestions.size > targetCount) {
+                        parsedQuestions.take(targetCount)
+                    } else {
+                        parsedQuestions
+                    }
                     val quizId = dao.insertQuizSet(QuizSet(title = title)).toInt()
-                    val finalQuestions = parsedQuestions.map { it.copy(quizSetId = quizId) }
+                    val finalQuestions = finalQuizQuestions.map { it.copy(quizSetId = quizId) }
                     dao.insertQuizQuestions(finalQuestions)
 
                     showResultNotification(
