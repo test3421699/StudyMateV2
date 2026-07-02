@@ -38,6 +38,13 @@ data class ChatMessage(
     val localImageUri: String? = null
 )
 
+sealed interface DictionarySearchState {
+    object Idle : DictionarySearchState
+    object Loading : DictionarySearchState
+    data class Success(val entries: List<DictionaryEntry>) : DictionarySearchState
+    data class Error(val message: String) : DictionarySearchState
+}
+
 class StudyMateViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
@@ -4943,6 +4950,86 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 withContext(Dispatchers.Main) {
                     android.widget.Toast.makeText(context, "Restore failed: ${e.localizedMessage}", android.widget.Toast.LENGTH_LONG).show()
                 }
+            }
+        }
+    }
+
+    // --- Dictionary Section State & Logic ---
+    val dictionarySearchState = MutableStateFlow<DictionarySearchState>(DictionarySearchState.Idle)
+
+    fun searchDictionary(word: String) {
+        if (word.isBlank()) {
+            dictionarySearchState.value = DictionarySearchState.Idle
+            return
+        }
+        dictionarySearchState.value = DictionarySearchState.Loading
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val results = DictionaryNetwork.api.getDefinition(word.trim().lowercase())
+                dictionarySearchState.value = DictionarySearchState.Success(results)
+            } catch (e: Exception) {
+                Log.e("StudyMateVM", "Dictionary lookup failed for $word", e)
+                val errMsg = if (e is retrofit2.HttpException && e.code() == 404) {
+                    "No definitions found for \"$word\"."
+                } else {
+                    "Unable to connect to dictionary. Please check your network connection."
+                }
+                dictionarySearchState.value = DictionarySearchState.Error(errMsg)
+            }
+        }
+    }
+
+    fun saveWordToDictionaryNotes(word: String, entries: List<DictionaryEntry>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Check if already saved
+                val existing = notes.value.firstOrNull { it.fileType == "DICTIONARY" && it.title.equals(word, ignoreCase = true) }
+                if (existing != null) {
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(getApplication(), "\"$word\" is already saved in your dictionary notes!", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                    return@launch
+                }
+
+                // Serialize entries list
+                val type = com.squareup.moshi.Types.newParameterizedType(List::class.java, DictionaryEntry::class.java)
+                val adapter = DictionaryNetwork.moshi.adapter<List<DictionaryEntry>>(type)
+                val jsonContent = adapter.toJson(entries)
+
+                val note = NoteEntry(
+                    title = word,
+                    content = jsonContent,
+                    fileType = "DICTIONARY",
+                    filePath = null,
+                    subject = "",
+                    chapter = "",
+                    createdAt = System.currentTimeMillis()
+                )
+                dao.insertNote(note)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(getApplication(), "\"$word\" successfully bookmarked to your dictionary!", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            } catch (e: Exception) {
+                Log.e("StudyMateVM", "Failed to save word $word", e)
+                withContext(Dispatchers.Main) {
+                    android.widget.Toast.makeText(getApplication(), "Failed to save word: ${e.localizedMessage}", android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    fun deleteWordFromDictionaryNotes(wordId: Int) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val existing = notes.value.firstOrNull { it.id == wordId }
+                if (existing != null) {
+                    dao.deleteNote(existing)
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(getApplication(), "Removed from dictionary notes.", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("StudyMateVM", "Failed to delete word ID $wordId", e)
             }
         }
     }

@@ -579,7 +579,7 @@ fun DashboardTab(viewModel: StudyMateViewModel, onNavigateToTab: (String) -> Uni
                 }
 
                 // Card 2: Library
-                val notesCount = viewModel.notes.collectAsStateWithLifecycle().value.size
+                val notesCount = viewModel.notes.collectAsStateWithLifecycle().value.count { it.fileType != "DICTIONARY" }
                 val flashCount = viewModel.flashcardSets.collectAsStateWithLifecycle().value.size
                 val quizCount = viewModel.quizSets.collectAsStateWithLifecycle().value.size
                 val totalLibraryCount = notesCount + flashCount + quizCount
@@ -1612,7 +1612,8 @@ fun NotebooksTab(viewModel: StudyMateViewModel) {
             "Flashcards" to "AI Flashcards",
             "Quizzes" to "AI Quizzes",
             "Summarizer" to "AI Summarizer",
-            "Mindmap" to "AI Mind Map"
+            "Mindmap" to "AI Mind Map",
+            "Dictionary" to "Dictionary"
         )
         val selectedIdx = tabs.indexOfFirst { it.first == activeSubTab }.coerceAtLeast(0)
 
@@ -1642,6 +1643,7 @@ fun NotebooksTab(viewModel: StudyMateViewModel) {
             "Quizzes" -> QuizzesPlaySection(viewModel)
             "Summarizer" -> SummarizerSection(viewModel)
             "Mindmap" -> MindMapSection(viewModel)
+            "Dictionary" -> DictionarySection(viewModel)
         }
     }
 }
@@ -1847,13 +1849,14 @@ fun NotesFolderSection(viewModel: StudyMateViewModel, onOpenDoc: (ActiveViewer) 
             // Filtering items
             val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
             val currentLevelNotes = remember(notesList, currentSubject, currentChapter, searchQuery) {
+                val nonDict = notesList.filter { it.fileType != "DICTIONARY" }
                 if (searchQuery.isNotBlank()) {
-                    notesList.filter {
+                    nonDict.filter {
                         it.title.contains(searchQuery, ignoreCase = true) ||
                         it.content.contains(searchQuery, ignoreCase = true)
                     }
                 } else {
-                    notesList.filter {
+                    nonDict.filter {
                         val subMatch = (it.subject == (currentSubject ?: ""))
                         val chapMatch = (it.chapter == (currentChapter ?: ""))
                         subMatch && chapMatch
@@ -7205,6 +7208,500 @@ fun StaggeredEntrance(
         )
     ) {
         content()
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun DictionarySection(viewModel: StudyMateViewModel) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedSubSection by remember { mutableStateOf("SEARCH") } // "SEARCH" or "SAVED"
+    val searchState by viewModel.dictionarySearchState.collectAsStateWithLifecycle()
+    val notesList by viewModel.notes.collectAsStateWithLifecycle()
+    
+    val savedWords = remember(notesList) {
+        notesList.filter { it.fileType == "DICTIONARY" }
+    }
+    
+    val context = LocalContext.current
+    val mediaPlayer = remember { android.media.MediaPlayer() }
+    
+    // Clean up MediaPlayer when section is disposed
+    DisposableEffect(Unit) {
+        onDispose {
+            try {
+                mediaPlayer.release()
+            } catch (e: Exception) {
+                // ignore
+            }
+        }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 16.dp, vertical = 8.dp)
+    ) {
+        // Tab Selector for Search vs Saved Words
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            ElevatedFilterChip(
+                selected = selectedSubSection == "SEARCH",
+                onClick = { selectedSubSection = "SEARCH" },
+                label = { Text("Word Lookup") },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                modifier = Modifier.weight(1f).testTag("dict_search_tab_chip")
+            )
+            ElevatedFilterChip(
+                selected = selectedSubSection == "SAVED",
+                onClick = { selectedSubSection = "SAVED" },
+                label = { Text("Saved Words (${savedWords.size})") },
+                leadingIcon = { Icon(Icons.Default.Bookmark, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                modifier = Modifier.weight(1f).testTag("dict_saved_tab_chip")
+            )
+        }
+
+        Spacer(modifier = Modifier.height(10.dp))
+
+        if (selectedSubSection == "SEARCH") {
+            // Search Input Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text("Enter a word to lookup...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
+                    singleLine = true,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("dict_search_input"),
+                    shape = RoundedCornerShape(12.dp),
+                    keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                        imeAction = androidx.compose.ui.text.input.ImeAction.Search
+                    ),
+                    keyboardActions = androidx.compose.foundation.text.KeyboardActions(
+                        onSearch = {
+                            viewModel.searchDictionary(searchQuery)
+                        }
+                    )
+                )
+
+                Button(
+                    onClick = { viewModel.searchDictionary(searchQuery) },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.height(56.dp).testTag("dict_search_button")
+                ) {
+                    Text("Search")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            // Search Results State Renderer
+            when (val state = searchState) {
+                is DictionarySearchState.Idle -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Book,
+                                contentDescription = null,
+                                modifier = Modifier.size(72.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            )
+                            Text(
+                                text = "Search any word to see definitions, phonetics, and speech components.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 32.dp)
+                            )
+                        }
+                    }
+                }
+                is DictionarySearchState.Loading -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(16.dp)
+                        ) {
+                            CircularProgressIndicator()
+                            Text(
+                                text = "Querying academic dictionary...",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+                is DictionarySearchState.Error -> {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
+                            modifier = Modifier.padding(16.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(16.dp),
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error)
+                                Text(
+                                    text = state.message,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                    }
+                }
+                is DictionarySearchState.Success -> {
+                    LazyColumn(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        items(state.entries) { entry ->
+                            DictionaryEntryCard(
+                                entry = entry,
+                                onSave = { viewModel.saveWordToDictionaryNotes(entry.word, state.entries) },
+                                isSaved = savedWords.any { it.title.equals(entry.word, ignoreCase = true) },
+                                onPlayAudio = { audioUrl ->
+                                    var cleanedAudio = audioUrl
+                                    if (cleanedAudio.startsWith("//")) {
+                                        cleanedAudio = "https:$cleanedAudio"
+                                    }
+                                    try {
+                                        mediaPlayer.reset()
+                                        mediaPlayer.setDataSource(cleanedAudio)
+                                        mediaPlayer.prepareAsync()
+                                        mediaPlayer.setOnPreparedListener { it.start() }
+                                    } catch (e: Exception) {
+                                        android.widget.Toast.makeText(context, "Audio pronunciation not available.", android.widget.Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            // Saved Words sub-section
+            if (savedWords.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.BookmarkBorder,
+                            contentDescription = null,
+                            modifier = Modifier.size(72.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                        )
+                        Text(
+                            text = "No saved dictionary terms yet.\nSearch and bookmark words to study them offline!",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 32.dp)
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(savedWords) { savedNote ->
+                        var isExpanded by remember { mutableStateOf(false) }
+                        val savedEntries = remember(savedNote.content) {
+                            try {
+                                val type = com.squareup.moshi.Types.newParameterizedType(List::class.java, DictionaryEntry::class.java)
+                                val adapter = DictionaryNetwork.moshi.adapter<List<DictionaryEntry>>(type)
+                                adapter.fromJson(savedNote.content) ?: emptyList()
+                            } catch (e: Exception) {
+                                emptyList()
+                            }
+                        }
+
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .animateContentSize(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp)
+                            ),
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        ) {
+                            Column(modifier = Modifier.padding(14.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = savedNote.title.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() },
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        if (savedEntries.isNotEmpty() && !savedEntries[0].phonetic.isNullOrBlank()) {
+                                            Text(
+                                                text = savedEntries[0].phonetic ?: "",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.secondary
+                                            )
+                                        }
+                                    }
+
+                                    IconButton(
+                                        onClick = { isExpanded = !isExpanded },
+                                        modifier = Modifier.size(40.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = if (isExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                            contentDescription = "Toggle Details"
+                                        )
+                                    }
+
+                                    IconButton(
+                                        onClick = { viewModel.deleteWordFromDictionaryNotes(savedNote.id) },
+                                        modifier = Modifier.size(40.dp).testTag("delete_saved_word_btn")
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Delete,
+                                            contentDescription = "Delete from Dictionary",
+                                            tint = MaterialTheme.colorScheme.error
+                                        )
+                                    }
+                                }
+
+                                if (isExpanded && savedEntries.isNotEmpty()) {
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                                    Spacer(modifier = Modifier.height(8.dp))
+
+                                    savedEntries.forEach { entry ->
+                                        entry.meanings.forEach { meaning ->
+                                            Text(
+                                                text = meaning.partOfSpeech.replaceFirstChar { it.uppercaseChar() },
+                                                style = MaterialTheme.typography.labelLarge,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.tertiary,
+                                                modifier = Modifier.padding(top = 4.dp, bottom = 2.dp)
+                                            )
+                                            meaning.definitions.forEachIndexed { defIdx, def ->
+                                                Row(
+                                                    modifier = Modifier.padding(start = 8.dp, bottom = 4.dp),
+                                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                                ) {
+                                                    Text(
+                                                        text = "${defIdx + 1}.",
+                                                        style = MaterialTheme.typography.bodyMedium,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                    Column {
+                                                        Text(
+                                                            text = def.definition,
+                                                            style = MaterialTheme.typography.bodyMedium,
+                                                            color = MaterialTheme.colorScheme.onSurface
+                                                        )
+                                                        if (!def.example.isNullOrBlank()) {
+                                                            Text(
+                                                                text = "\"${def.example}\"",
+                                                                style = MaterialTheme.typography.bodySmall,
+                                                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                                                modifier = Modifier.padding(top = 2.dp)
+                                                            )
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun DictionaryEntryCard(
+    entry: DictionaryEntry,
+    isSaved: Boolean,
+    onSave: () -> Unit,
+    onPlayAudio: (String) -> Unit
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)),
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            // Header Row (Word, Phonetic, Audio, Save)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = entry.word.replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.getDefault()) else it.toString() },
+                        style = MaterialTheme.typography.headlineSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    if (!entry.phonetic.isNullOrBlank()) {
+                        Text(
+                            text = entry.phonetic,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                    }
+                }
+
+                // Audio Button
+                val audioUrl = remember(entry.phonetics) {
+                    entry.phonetics?.firstOrNull { !it.audio.isNullOrBlank() }?.audio
+                }
+                if (!audioUrl.isNullOrBlank()) {
+                    IconButton(
+                        onClick = { onPlayAudio(audioUrl) },
+                        modifier = Modifier.size(40.dp).testTag("play_pronunciation_btn")
+                    ) {
+                        Icon(Icons.Default.VolumeUp, contentDescription = "Play Audio Pronunciation", tint = MaterialTheme.colorScheme.primary)
+                    }
+                }
+
+                // Bookmark/Save Button
+                IconButton(
+                    onClick = onSave,
+                    modifier = Modifier.size(40.dp).testTag("bookmark_word_btn")
+                ) {
+                    Icon(
+                        imageVector = if (isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
+                        contentDescription = "Save Word",
+                        tint = if (isSaved) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Meanings List
+            entry.meanings.forEachIndexed { mIdx, meaning ->
+                Text(
+                    text = meaning.partOfSpeech.replaceFirstChar { it.uppercaseChar() },
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
+                )
+
+                meaning.definitions.forEachIndexed { dIdx, def ->
+                    Column(modifier = Modifier.padding(start = 8.dp, bottom = 8.dp)) {
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(
+                                text = "${dIdx + 1}.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = def.definition,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        if (!def.example.isNullOrBlank()) {
+                            Text(
+                                text = "\"${def.example}\"",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                                modifier = Modifier.padding(start = 20.dp, top = 2.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Display Synonyms/Antonyms if present
+                if (!meaning.synonyms.isNullOrEmpty()) {
+                    Row(
+                        modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Synonyms: ", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = meaning.synonyms.take(5).joinToString(", "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+                if (!meaning.antonyms.isNullOrEmpty()) {
+                    Row(
+                        modifier = Modifier.padding(start = 8.dp, top = 4.dp, bottom = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("Antonyms: ", style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Bold)
+                        Text(
+                            text = meaning.antonyms.take(5).joinToString(", "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                }
+            }
+        }
     }
 }
 
