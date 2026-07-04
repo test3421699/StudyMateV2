@@ -1438,7 +1438,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             }
             if (clean.isEmpty()) return@withContext null
             
-            val encoded = java.net.URLEncoder.encode(clean, "UTF-8")
+            val encoded = java.net.URLEncoder.encode(clean, "UTF-8").replace("+", "%20")
             val bgParam = if (isDark) "1E2124" else "FFFFFF"
             val fgParam = if (isDark) "white" else "black"
             
@@ -1460,6 +1460,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
     private inner class KatexEquationBlock(val latexContent: String) : PdfBlock() {
         private var loadedBitmap: android.graphics.Bitmap? = null
         private var isLoadAttempted = false
+        private var isBitmapFromCodeCogs = false
 
         suspend fun loadBitmap(context: Context, width: Int) {
             if (isLoadAttempted) return
@@ -1474,9 +1475,13 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             
             // Layer 1: Online CodeCogs LaTeX-to-Image API (Run on IO Dispatcher)
             var bitmap = downloadLatexImage(latexContent, renderingPdfInDarkTheme)
+            if (bitmap != null) {
+                isBitmapFromCodeCogs = true
+            }
             
             // Layer 2: Offline WebView KaTeX renderer with data-rendered validation
             if (bitmap == null) {
+                isBitmapFromCodeCogs = false
                 val html = """
                     <!DOCTYPE html>
                     <html>
@@ -1545,13 +1550,15 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         override fun getHeight(width: Int, textPaint: android.text.TextPaint): Float {
             val bitmap = loadedBitmap
             if (bitmap != null && bitmap.width > 0) {
-                val scaleWidth = width.toFloat() / bitmap.width.toFloat()
-                var scaledHeight = bitmap.height.toFloat() * scaleWidth
-                val maxAllowedHeight = 350f
-                if (scaledHeight > maxAllowedHeight) {
-                    scaledHeight = maxAllowedHeight
+                val scale = if (isBitmapFromCodeCogs) (72f / 200f) else (width.toFloat() / bitmap.width.toFloat()).coerceAtMost(0.75f)
+                var drawWidth = bitmap.width.toFloat() * scale
+                var drawHeight = bitmap.height.toFloat() * scale
+                if (drawWidth > width) {
+                    val shrinkScale = width.toFloat() / drawWidth
+                    drawWidth = width.toFloat()
+                    drawHeight = drawHeight * shrinkScale
                 }
-                return scaledHeight + 10f
+                return drawHeight + 15f
             } else {
                 return 60f
             }
@@ -1560,19 +1567,17 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         override fun draw(canvas: android.graphics.Canvas, x: Float, y: Float, width: Int, textPaint: android.text.TextPaint) {
             val bitmap = loadedBitmap
             if (bitmap != null && bitmap.width > 0) {
-                val h = getHeight(width, textPaint) - 10f
-                val srcAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
-                val destAspect = width.toFloat() / h
-                
-                val drawRect = if (srcAspect > destAspect) {
-                    val drawH = width.toFloat() / srcAspect
-                    val topOffset = (h - drawH) / 2f
-                    android.graphics.RectF(x, y + 5f + topOffset, x + width, y + 5f + topOffset + drawH)
-                } else {
-                    val drawW = h * srcAspect
-                    val leftOffset = (width.toFloat() - drawW) / 2f
-                    android.graphics.RectF(x + leftOffset, y + 5f, x + leftOffset + drawW, y + 5f + h)
+                val scale = if (isBitmapFromCodeCogs) (72f / 200f) else (width.toFloat() / bitmap.width.toFloat()).coerceAtMost(0.75f)
+                var drawWidth = bitmap.width.toFloat() * scale
+                var drawHeight = bitmap.height.toFloat() * scale
+                if (drawWidth > width) {
+                    val shrinkScale = width.toFloat() / drawWidth
+                    drawWidth = width.toFloat()
+                    drawHeight = drawHeight * shrinkScale
                 }
+                
+                val leftOffset = (width.toFloat() - drawWidth) / 2f
+                val drawRect = android.graphics.RectF(x + leftOffset, y + 5f, x + leftOffset + drawWidth, y + 5f + drawHeight)
                 
                 canvas.drawBitmap(bitmap, null, drawRect, null)
             } else {
