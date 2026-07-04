@@ -1113,7 +1113,10 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             wv.settings.offscreenPreRaster = true
             wv.setWillNotDraw(false)
             
-            val styledHtml = """
+            val styledHtml = if (htmlContent.trim().startsWith("<!DOCTYPE") || htmlContent.trim().startsWith("<html")) {
+                htmlContent
+            } else {
+                """
                 <!DOCTYPE html>
                 <html>
                 <head>
@@ -1123,8 +1126,8 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                             margin: 0;
                             padding: 0;
                             width: 100%;
-                            background-color: #1A1348;
-                            color: #FFFFFF;
+                            background-color: ${if (renderingPdfInDarkTheme) "#1E2124" else "#FFFFFF"};
+                            color: ${if (renderingPdfInDarkTheme) "#FFFFFF" else "#212121"};
                             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
                             box-sizing: border-box;
                         }
@@ -1146,7 +1149,8 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     </div>
                 </body>
                 </html>
-            """.trimIndent()
+                """.trimIndent()
+            }
             
             if (activity != null) {
                 val decorView = activity.window.decorView as? android.view.ViewGroup
@@ -1249,7 +1253,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 }
             }
             
-            wv.loadDataWithBaseURL(null, styledHtml, "text/html", "UTF-8", null)
+            wv.loadDataWithBaseURL("https://localhost", styledHtml, "text/html", "UTF-8", null)
         } catch (e: Exception) {
             Log.e("StudyMateVM", "Error in renderHtmlToBitmap setup", e)
             result.complete(null)
@@ -1406,6 +1410,137 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private fun escapeForJsString(input: String): String {
+        return input
+            .replace("\\", "\\\\")
+            .replace("'", "\\'")
+            .replace("\"", "\\\"")
+            .replace("\r", "")
+            .replace("\n", " ")
+    }
+
+    private inner class KatexEquationBlock(val latexContent: String) : PdfBlock() {
+        private var loadedBitmap: android.graphics.Bitmap? = null
+        private var isLoadAttempted = false
+
+        suspend fun loadBitmap(context: Context, width: Int) {
+            if (isLoadAttempted) return
+            isLoadAttempted = true
+            
+            var cleanLatex = latexContent.trim()
+            if (cleanLatex.startsWith("$$") && cleanLatex.endsWith("$$")) {
+                cleanLatex = cleanLatex.removePrefix("$$").removeSuffix("$$").trim()
+            } else if (cleanLatex.startsWith("\\[") && cleanLatex.endsWith("\\]")) {
+                cleanLatex = cleanLatex.removePrefix("\\[").removeSuffix("\\]").trim()
+            }
+            
+            val html = """
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+                    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+                    <style>
+                        html, body {
+                            margin: 0;
+                            padding: 0;
+                            width: 100%;
+                            background-color: ${if (renderingPdfInDarkTheme) "#1E2124" else "#FFFFFF"};
+                            color: ${if (renderingPdfInDarkTheme) "#FFFFFF" else "#212121"};
+                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                            box-sizing: border-box;
+                        }
+                        .diagram-wrapper {
+                            width: 100%;
+                            padding: 16px;
+                            box-sizing: border-box;
+                            display: flex;
+                            flex-direction: column;
+                            justify-content: center;
+                            align-items: center;
+                            text-align: center;
+                        }
+                        .katex-display {
+                            margin: 0 !important;
+                            padding: 4px 0 !important;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="diagram-wrapper">
+                        <div id="math-element"></div>
+                    </div>
+                    <script>
+                        try {
+                            var element = document.getElementById('math-element');
+                            var rawLatex = '${escapeForJsString(cleanLatex)}';
+                            katex.render(rawLatex, element, {
+                                displayMode: true,
+                                throwOnError: false
+                            });
+                        } catch(e) {
+                            console.error(e);
+                        }
+                    </script>
+                </body>
+                </html>
+            """.trimIndent()
+            
+            loadedBitmap = renderHtmlToBitmap(html, width, 400, context)
+        }
+
+        override fun getHeight(width: Int, textPaint: android.text.TextPaint): Float {
+            val bitmap = loadedBitmap
+            if (bitmap != null && bitmap.width > 0) {
+                val scaleWidth = width.toFloat() / bitmap.width.toFloat()
+                var scaledHeight = bitmap.height.toFloat() * scaleWidth
+                val maxAllowedHeight = 350f
+                if (scaledHeight > maxAllowedHeight) {
+                    scaledHeight = maxAllowedHeight
+                }
+                return scaledHeight + 10f
+            } else {
+                return 60f
+            }
+        }
+
+        override fun draw(canvas: android.graphics.Canvas, x: Float, y: Float, width: Int, textPaint: android.text.TextPaint) {
+            val bitmap = loadedBitmap
+            if (bitmap != null && bitmap.width > 0) {
+                val h = getHeight(width, textPaint) - 10f
+                val srcAspect = bitmap.width.toFloat() / bitmap.height.toFloat()
+                val destAspect = width.toFloat() / h
+                
+                val drawRect = if (srcAspect > destAspect) {
+                    val drawH = width.toFloat() / srcAspect
+                    val topOffset = (h - drawH) / 2f
+                    android.graphics.RectF(x, y + 5f + topOffset, x + width, y + 5f + topOffset + drawH)
+                } else {
+                    val drawW = h * srcAspect
+                    val leftOffset = (width.toFloat() - drawW) / 2f
+                    android.graphics.RectF(x + leftOffset, y + 5f, x + leftOffset + drawW, y + 5f + h)
+                }
+                
+                canvas.drawBitmap(bitmap, null, drawRect, null)
+            } else {
+                val clean = formatLatexToUnicode(latexContent)
+                val staticLayout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    android.text.StaticLayout.Builder.obtain(clean, 0, clean.length, textPaint, width)
+                        .setLineSpacing(0f, 1.15f)
+                        .build()
+                } else {
+                    @Suppress("DEPRECATION")
+                    android.text.StaticLayout(clean, textPaint, width, android.text.Layout.Alignment.ALIGN_CENTER, 1.15f, 0f, false)
+                }
+                canvas.save()
+                canvas.translate(x, y + 10f)
+                staticLayout.draw(canvas)
+                canvas.restore()
+            }
+        }
+    }
+
     private fun partitionTextIntoBlocks(textContent: String): List<PdfBlock> {
         val lines = textContent.split("\n")
         val blocks = mutableListOf<PdfBlock>()
@@ -1441,6 +1576,67 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     }
                     // Simply avoid [diagram] blocks
                     i = j + 1
+                    continue
+                }
+            }
+
+            val isMathBlock = trimmed.startsWith("$$") || trimmed.startsWith("\\[") || trimmed.startsWith("\\begin{")
+            if (isMathBlock) {
+                if (currentTextLines.isNotEmpty()) {
+                    blocks.add(TextBlock(currentTextLines.joinToString("\n")))
+                    currentTextLines.clear()
+                }
+                
+                if (trimmed.startsWith("$$") && trimmed.endsWith("$$") && trimmed.length > 2) {
+                    blocks.add(KatexEquationBlock(trimmed))
+                    i++
+                    continue
+                } else {
+                    val mathLines = mutableListOf<String>()
+                    mathLines.add(line)
+                    var j = i + 1
+                    var foundEnd = false
+                    
+                    if (trimmed.startsWith("$$")) {
+                        while (j < lines.size) {
+                            val nextLine = lines[j]
+                            mathLines.add(nextLine)
+                            if (nextLine.trim().endsWith("$$")) {
+                                foundEnd = true
+                                j++
+                                break
+                            }
+                            j++
+                        }
+                    } else if (trimmed.startsWith("\\[")) {
+                        while (j < lines.size) {
+                            val nextLine = lines[j]
+                            mathLines.add(nextLine)
+                            if (nextLine.trim().endsWith("\\]")) {
+                                foundEnd = true
+                                j++
+                                break
+                            }
+                            j++
+                        }
+                    } else if (trimmed.startsWith("\\begin{")) {
+                        val envName = trimmed.substringAfter("{").substringBefore("}")
+                        val endTag = "\\end{$envName}"
+                        while (j < lines.size) {
+                            val nextLine = lines[j]
+                            mathLines.add(nextLine)
+                            if (nextLine.trim().contains(endTag)) {
+                                foundEnd = true
+                                j++
+                                break
+                            }
+                            j++
+                        }
+                    }
+                    
+                    val combinedMath = mathLines.joinToString("\n")
+                    blocks.add(KatexEquationBlock(combinedMath))
+                    i = j
                     continue
                 }
             }
@@ -1698,9 +1894,11 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
 
         val blocks = partitionTextIntoBlocks(wrappedText)
 
-        // Pre-load all HtmlDiagramBlocks asynchronously on Main Thread before pagination
+        // Pre-load all HtmlDiagramBlocks and KatexEquationBlocks asynchronously on Main Thread before pagination
         blocks.forEach { block ->
             if (block is HtmlDiagramBlock) {
+                block.loadBitmap(context, contentWidth)
+            } else if (block is KatexEquationBlock) {
                 block.loadBitmap(context, contentWidth)
             }
         }
@@ -2166,6 +2364,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             "\\supseteq" to "⊇",
             "\\angle" to "∠",
             "\\degree" to "°",
+            "\\deg" to "°",
             "\\parallel" to "∥",
             "\\dots" to "...",
             "\\ldots" to "..."
@@ -2174,8 +2373,16 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             text = text.replace(key, value)
         }
 
-        // Remove remaining backslashes for undefined commands
-        text = text.replace(Regex("\\\\[a-zA-Z]+"), "")
+        // Remove remaining backslashes for undefined commands, but keep common mathematical functions/words
+        val allowedWords = setOf(
+            "sin", "cos", "tan", "cis", "sec", "csc", "cot",
+            "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh",
+            "log", "ln", "lg", "lim", "max", "min", "deg", "exp", "det"
+        )
+        text = text.replace(Regex("\\\\([a-zA-Z]+)")) { matchResult ->
+            val word = matchResult.groupValues[1]
+            if (word.lowercase() in allowedWords) word else ""
+        }
 
         // Clean up block delimiters $$...$$ and inline $...$
         text = text.replace("$$", "")
