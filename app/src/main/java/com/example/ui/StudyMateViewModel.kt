@@ -704,7 +704,9 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         val textLines = entireText.split("\n")
         var currentOffset = 0
         for (tline in textLines) {
-            if (tline.contains("=") && (tline.contains("+") || tline.contains("-") || tline.contains("·") || tline.contains("/") || tline.contains("×") || tline.any { it in '⁰'..'⁹' || it in '₀'..'₉' })) {
+            val lowerLine = tline.lowercase()
+            val containsMathWord = lowerLine.contains("sin") || lowerLine.contains("cos") || lowerLine.contains("tan") || lowerLine.contains("cis") || lowerLine.contains("log") || lowerLine.contains("ln") || lowerLine.contains("deg") || lowerLine.contains("°")
+            if (containsMathWord || (tline.contains("=") && (tline.contains("+") || tline.contains("-") || tline.contains("·") || tline.contains("/") || tline.contains("×") || tline.any { it in '⁰'..'⁹' || it in '₀'..'₉' }))) {
                 ssb.setSpan(
                     android.text.style.StyleSpan(android.graphics.Typeface.BOLD_ITALIC),
                     currentOffset,
@@ -1168,6 +1170,8 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     wv.postDelayed({
                         wv.evaluateJavascript(
                             "(function() {\n" +
+                            "  var renderedAttr = document.body.getAttribute('data-rendered');\n" +
+                            "  if (renderedAttr === 'false') return 'ERROR';\n" +
                             "  var wrapper = document.querySelector('.diagram-wrapper');\n" +
                             "  if (!wrapper) return '800,500';\n" +
                             "  var svg = wrapper.querySelector('svg');\n" +
@@ -1211,10 +1215,15 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                             "  return Math.ceil(finalW + 32) + ',' + Math.ceil(finalH + 32);\n" +
                             "})()"
                         ) { dimensionsStr ->
-                            val parts = dimensionsStr?.replace("\"", "")?.trim()?.split(",")
+                            val cleaned = dimensionsStr?.replace("\"", "")?.trim()
+                            if (cleaned == "ERROR" || cleaned == null) {
+                                result.complete(null)
+                                return@evaluateJavascript
+                            }
+                            val parts = cleaned.split(",")
                             var finalW = initialWidth
                             var finalH = initialHeight
-                            if (parts != null && parts.size == 2) {
+                            if (parts.size == 2) {
                                 val parsedW = parts[0].toDoubleOrNull()?.toInt() ?: 0
                                 val parsedH = parts[1].toDoubleOrNull()?.toInt() ?: 0
                                 if (parsedW > 0 && parsedH > 0) {
@@ -1419,6 +1428,35 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
             .replace("\n", " ")
     }
 
+    private suspend fun downloadLatexImage(latexContent: String, isDark: Boolean): android.graphics.Bitmap? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        try {
+            var clean = latexContent.trim()
+            if (clean.startsWith("$$") && clean.endsWith("$$")) {
+                clean = clean.removePrefix("$$").removeSuffix("$$").trim()
+            } else if (clean.startsWith("\\[") && clean.endsWith("\\]")) {
+                clean = clean.removePrefix("\\[").removeSuffix("\\]").trim()
+            }
+            if (clean.isEmpty()) return@withContext null
+            
+            val encoded = java.net.URLEncoder.encode(clean, "UTF-8")
+            val bgParam = if (isDark) "1E2124" else "FFFFFF"
+            val fgParam = if (isDark) "white" else "black"
+            
+            val urlString = "https://latex.codecogs.com/png.image?\\dpi{200}\\bg{$bgParam}\\color{$fgParam}%20$encoded"
+            val url = java.net.URL(urlString)
+            val connection = url.openConnection() as java.net.HttpURLConnection
+            connection.connectTimeout = 3000
+            connection.readTimeout = 3000
+            connection.useCaches = true
+            connection.inputStream.use { stream ->
+                android.graphics.BitmapFactory.decodeStream(stream)
+            }
+        } catch (e: Exception) {
+            Log.e("StudyMateVM", "Error downloading latex image from CodeCogs", e)
+            null
+        }
+    }
+
     private inner class KatexEquationBlock(val latexContent: String) : PdfBlock() {
         private var loadedBitmap: android.graphics.Bitmap? = null
         private var isLoadAttempted = false
@@ -1434,60 +1472,74 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 cleanLatex = cleanLatex.removePrefix("\\[").removeSuffix("\\]").trim()
             }
             
-            val html = """
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-                    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
-                    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
-                    <style>
-                        html, body {
-                            margin: 0;
-                            padding: 0;
-                            width: 100%;
-                            background-color: ${if (renderingPdfInDarkTheme) "#1E2124" else "#FFFFFF"};
-                            color: ${if (renderingPdfInDarkTheme) "#FFFFFF" else "#212121"};
-                            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                            box-sizing: border-box;
-                        }
-                        .diagram-wrapper {
-                            width: 100%;
-                            padding: 16px;
-                            box-sizing: border-box;
-                            display: flex;
-                            flex-direction: column;
-                            justify-content: center;
-                            align-items: center;
-                            text-align: center;
-                        }
-                        .katex-display {
-                            margin: 0 !important;
-                            padding: 4px 0 !important;
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="diagram-wrapper">
-                        <div id="math-element"></div>
-                    </div>
-                    <script>
-                        try {
-                            var element = document.getElementById('math-element');
-                            var rawLatex = '${escapeForJsString(cleanLatex)}';
-                            katex.render(rawLatex, element, {
-                                displayMode: true,
-                                throwOnError: false
-                            });
-                        } catch(e) {
-                            console.error(e);
-                        }
-                    </script>
-                </body>
-                </html>
-            """.trimIndent()
+            // Layer 1: Online CodeCogs LaTeX-to-Image API (Run on IO Dispatcher)
+            var bitmap = downloadLatexImage(latexContent, renderingPdfInDarkTheme)
             
-            loadedBitmap = renderHtmlToBitmap(html, width, 400, context)
+            // Layer 2: Offline WebView KaTeX renderer with data-rendered validation
+            if (bitmap == null) {
+                val html = """
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                        <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+                        <script src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+                        <style>
+                            html, body {
+                                margin: 0;
+                                padding: 0;
+                                width: 100%;
+                                background-color: ${if (renderingPdfInDarkTheme) "#1E2124" else "#FFFFFF"};
+                                color: ${if (renderingPdfInDarkTheme) "#FFFFFF" else "#212121"};
+                                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                                box-sizing: border-box;
+                            }
+                            .diagram-wrapper {
+                                width: 100%;
+                                padding: 16px;
+                                box-sizing: border-box;
+                                display: flex;
+                                flex-direction: column;
+                                justify-content: center;
+                                align-items: center;
+                                text-align: center;
+                            }
+                            .katex-display {
+                                margin: 0 !important;
+                                padding: 4px 0 !important;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <div class="diagram-wrapper">
+                            <div id="math-element"></div>
+                        </div>
+                        <script>
+                            try {
+                                var element = document.getElementById('math-element');
+                                var rawLatex = '${escapeForJsString(cleanLatex)}';
+                                if (typeof katex !== 'undefined') {
+                                    katex.render(rawLatex, element, {
+                                        displayMode: true,
+                                        throwOnError: false
+                                    });
+                                    document.body.setAttribute('data-rendered', 'true');
+                                } else {
+                                    document.body.setAttribute('data-rendered', 'false');
+                                }
+                            } catch(e) {
+                                console.error(e);
+                                document.body.setAttribute('data-rendered', 'false');
+                            }
+                        </script>
+                    </body>
+                    </html>
+                """.trimIndent()
+                
+                bitmap = renderHtmlToBitmap(html, width, 400, context)
+            }
+            
+            loadedBitmap = bitmap
         }
 
         override fun getHeight(width: Int, textPaint: android.text.TextPaint): Float {
@@ -2202,6 +2254,15 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     fun formatLatexToUnicode(input: String): String {
         var text = input
+
+        // Replace common LaTeX degree representations with standard unicode degree symbol °
+        text = text.replace("^{\\circ}", "°")
+        text = text.replace("^\\circ", "°")
+        text = text.replace("^{\\degree}", "°")
+        text = text.replace("^\\degree", "°")
+        text = text.replace("\\degree", "°")
+        text = text.replace("\\deg", "°")
+        text = text.replace("\\circ", "°")
 
         // Replace common double backslash escaped characters first
         text = text.replace("\\\\{", "{")
