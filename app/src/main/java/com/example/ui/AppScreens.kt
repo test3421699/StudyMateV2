@@ -2643,15 +2643,60 @@ fun NotesFolderSection(viewModel: StudyMateViewModel, onOpenDoc: (ActiveViewer) 
 data class EditableDiagram(
     val id: Int,
     val originalBlock: String,
-    val htmlCode: String
+    val isBase64: Boolean,
+    val contentCode: String
 )
 
 fun parseDiagramsFromContent(content: String): List<EditableDiagram> {
-    return emptyList()
+    val list = mutableListOf<EditableDiagram>()
+    var idCounter = 1
+    
+    // Find all markdown code blocks: ```lang\ncontent\n```
+    val regex = Regex("```([a-zA-Z0-9_\\[\\]\\-]*)\\n(.*?)\\n```", RegexOption.DOT_MATCHES_ALL)
+    val matches = regex.findAll(content)
+    
+    for (match in matches) {
+        val originalBlock = match.value
+        val lang = match.groupValues[1].trim()
+        val blockBody = match.groupValues[2].trim()
+        
+        val isBase64 = lang.startsWith("[Base64]") || 
+                       lang.lowercase().contains("base64") || 
+                       blockBody.startsWith("[Base64]")
+                       
+        val isHtmlDiagram = lang.lowercase().contains("html") || 
+                            lang.lowercase().contains("xml") || 
+                            lang.lowercase().contains("svg") || 
+                            lang.lowercase().contains("diagram") || 
+                            blockBody.contains("[diagram]")
+                            
+        if (isBase64) {
+            val cleanCode = blockBody.removePrefix("[Base64]").trim()
+            list.add(EditableDiagram(
+                id = idCounter++,
+                originalBlock = originalBlock,
+                isBase64 = true,
+                contentCode = cleanCode
+            ))
+        } else if (isHtmlDiagram) {
+            val cleanCode = blockBody.removePrefix("[diagram]").trim()
+            list.add(EditableDiagram(
+                id = idCounter++,
+                originalBlock = originalBlock,
+                isBase64 = false,
+                contentCode = cleanCode
+            ))
+        }
+    }
+    return list
 }
 
-fun replaceDiagramInContent(originalContent: String, diagram: EditableDiagram, newHtmlCode: String): String {
-    val newBlock = "```html\n[diagram]\n$newHtmlCode\n```"
+fun replaceDiagramInContent(originalContent: String, diagram: EditableDiagram, newCode: String): String {
+    val newBlock = if (diagram.isBase64) {
+        "```[Base64]\n[Base64]$newCode\n```"
+    } else {
+        "```html\n[diagram]\n$newCode\n```"
+    }
     return originalContent.replace(diagram.originalBlock, newBlock)
 }
 
@@ -2830,18 +2875,27 @@ fun DocOpenerInbuiltView(mode: ActiveViewer, viewModel: StudyMateViewModel, onCl
                             val selectedDiag = diagrams.getOrNull(selectedDiagramIdx)
                             
                             var editableHtml by remember(selectedDiag) { 
-                                mutableStateOf(selectedDiag?.htmlCode ?: "") 
+                                mutableStateOf(selectedDiag?.contentCode ?: "") 
                             }
+
+                            val isB64 = selectedDiag?.isBase64 == true
+                            val titleText = if (isB64) "Edit Base64 Diagram Image" else "Edit Diagram HTML & CSS Code"
+                            val descriptionText = if (isB64) {
+                                "Paste your custom Base64 image code below. The app will decode and render it as an inline diagram:"
+                            } else {
+                                "Correct errors, customize colors, layout, or arrows of your HTML diagram:"
+                            }
+                            val labelText = if (isB64) "Base64 Image Code" else "HTML / CSS Code"
 
                             AlertDialog(
                                 onDismissRequest = { showEditDialog = false },
                                 title = {
-                                    Text("Edit Diagram HTML & CSS Code", fontWeight = FontWeight.Bold)
+                                    Text(titleText, fontWeight = FontWeight.Bold)
                                 },
                                 text = {
                                     Column(modifier = Modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
                                         Text(
-                                            "Correct errors, customize colors, layout, or arrows of your diagram:",
+                                            descriptionText,
                                             style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
@@ -2866,7 +2920,8 @@ fun DocOpenerInbuiltView(mode: ActiveViewer, viewModel: StudyMateViewModel, onCl
                                                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                                                         modifier = Modifier.padding(vertical = 4.dp)
                                                     ) {
-                                                        Text("Diagram ${diag.id}", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
+                                                        val typeLabel = if (diag.isBase64) "Base64" else "HTML"
+                                                        Text("Figure ${diag.id} ($typeLabel)", modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp), style = MaterialTheme.typography.labelMedium)
                                                     }
                                                 }
                                             }
@@ -2876,11 +2931,11 @@ fun DocOpenerInbuiltView(mode: ActiveViewer, viewModel: StudyMateViewModel, onCl
                                         OutlinedTextField(
                                             value = editableHtml,
                                             onValueChange = { editableHtml = it },
-                                            label = { Text("HTML / CSS Code") },
+                                            label = { Text(labelText) },
                                             modifier = Modifier.fillMaxWidth().height(250.dp).testTag("diagram_html_input"),
                                             textStyle = androidx.compose.ui.text.TextStyle(
                                                 fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                                                fontSize = 12.sp
+                                                fontSize = 11.sp
                                             ),
                                             maxLines = 15
                                         )
@@ -5714,6 +5769,26 @@ fun buildHtmlCodeBlock(language: String, lines: List<String>): String {
         .replace("&lt;", "<")
         .replace("&gt;", ">")
         .replace("&amp;", "&")
+
+    val isBase64 = language.trim().startsWith("[Base64]") ||
+                   language.lowercase().contains("base64") ||
+                   decodedContent.trim().startsWith("[Base64]")
+                   
+    if (isBase64) {
+        var cleanB64 = decodedContent.trim().removePrefix("[Base64]").trim()
+            .replace("\n", "")
+            .replace("\r", "")
+            .replace(" ", "")
+        if (cleanB64.startsWith("[Base64]")) {
+            cleanB64 = cleanB64.substring("[Base64]".length).trim()
+        }
+        val mime = if (cleanB64.startsWith("iVBORw0KGgo")) "image/png" else "image/jpeg"
+        return """
+            <div class="base64-diagram-container" style="width:100%; max-width:100%; margin:20px 0; border-radius:12px; background-color:#1e1e2d; border:1.5px solid #8E75FF; padding:15px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:center; align-items:center; overflow-x:auto; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
+                <img src="data:$mime;base64,$cleanB64" style="max-width:100%; max-height:450px; border-radius:8px; object-fit:contain;" alt="Base64 Diagram Image" />
+            </div>
+        """.trimIndent()
+    }
 
     // If it contains [diagram] or is marked as a diagram language, simply avoid / ignore it
     if (decodedContent.contains("[diagram]") || language.lowercase().contains("diagram")) {

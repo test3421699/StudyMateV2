@@ -1419,6 +1419,74 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
 
+    private inner class Base64ImageBlock(val base64Content: String) : PdfBlock() {
+        private var loadedBitmap: android.graphics.Bitmap? = null
+        private var isLoadAttempted = false
+
+        fun loadBitmap() {
+            if (isLoadAttempted) return
+            isLoadAttempted = true
+            try {
+                var cleanB64 = base64Content.trim()
+                    .replace("\n", "")
+                    .replace("\r", "")
+                    .replace(" ", "")
+                if (cleanB64.startsWith("[Base64]")) {
+                    cleanB64 = cleanB64.substring("[Base64]".length).trim()
+                }
+                val decodedBytes = android.util.Base64.decode(cleanB64, android.util.Base64.DEFAULT)
+                loadedBitmap = android.graphics.BitmapFactory.decodeByteArray(decodedBytes, 0, decodedBytes.size)
+            } catch (e: Exception) {
+                Log.e("Base64ImageBlock", "Error decoding base64 image", e)
+            }
+        }
+
+        override fun getHeight(width: Int, textPaint: android.text.TextPaint): Float {
+            loadBitmap()
+            val bitmap = loadedBitmap
+            if (bitmap != null && bitmap.width > 0) {
+                val scale = (width.toFloat() / bitmap.width.toFloat()).coerceAtMost(1f)
+                var drawWidth = bitmap.width.toFloat() * scale
+                var drawHeight = bitmap.height.toFloat() * scale
+                val maxAllowedHeight = 400f
+                if (drawHeight > maxAllowedHeight) {
+                    val shrinkScale = maxAllowedHeight / drawHeight
+                    drawWidth = drawWidth * shrinkScale
+                    drawHeight = maxAllowedHeight
+                }
+                return drawHeight + 15f
+            } else {
+                return 30f // Error / placeholder height
+            }
+        }
+
+        override fun draw(canvas: android.graphics.Canvas, x: Float, y: Float, width: Int, textPaint: android.text.TextPaint) {
+            loadBitmap()
+            val bitmap = loadedBitmap
+            if (bitmap != null && bitmap.width > 0) {
+                val scale = (width.toFloat() / bitmap.width.toFloat()).coerceAtMost(1f)
+                var drawWidth = bitmap.width.toFloat() * scale
+                var drawHeight = bitmap.height.toFloat() * scale
+                val maxAllowedHeight = 400f
+                if (drawHeight > maxAllowedHeight) {
+                    val shrinkScale = maxAllowedHeight / drawHeight
+                    drawWidth = drawWidth * shrinkScale
+                    drawHeight = maxAllowedHeight
+                }
+                val leftOffset = (width.toFloat() - drawWidth) / 2f
+                val drawRect = android.graphics.RectF(x + leftOffset, y + 5f, x + leftOffset + drawWidth, y + 5f + drawHeight)
+                canvas.drawBitmap(bitmap, null, drawRect, null)
+            } else {
+                val paint = android.graphics.Paint().apply {
+                    color = android.graphics.Color.RED
+                    textSize = 10f
+                    isAntiAlias = true
+                }
+                canvas.drawText("[Invalid or Corrupted Base64 Image Diagram Block]", x + 10f, y + 20f, paint)
+            }
+        }
+    }
+
     private fun escapeForJsString(input: String): String {
         return input
             .replace("\\", "\\\\")
@@ -1618,6 +1686,23 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 }
                 val blockText = blockLines.joinToString("\n")
                 
+                val isBase64 = trimmed.startsWith("```[Base64]") || 
+                               trimmed.lowercase().contains("base64") || 
+                               blockText.trim().startsWith("[Base64]")
+                               
+                if (isBase64) {
+                    if (currentTextLines.isNotEmpty()) {
+                        blocks.add(TextBlock(currentTextLines.joinToString("\n")))
+                        currentTextLines.clear()
+                    }
+                    blocks.add(Base64ImageBlock(blockText))
+                    i = j + 1
+                    if (i < lines.size && lines[i].trim().startsWith("```")) {
+                        i++ // Skip ending fence if any
+                    }
+                    continue
+                }
+                
                 val isDiagram = trimmed.startsWith("```html") || 
                                 trimmed.startsWith("```xml") || 
                                 trimmed.startsWith("```svg") || 
@@ -1631,8 +1716,11 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                         blocks.add(TextBlock(currentTextLines.joinToString("\n")))
                         currentTextLines.clear()
                     }
-                    // Simply avoid [diagram] blocks
+                    blocks.add(HtmlDiagramBlock(blockText))
                     i = j + 1
+                    if (i < lines.size && lines[i].trim().startsWith("```")) {
+                        i++
+                    }
                     continue
                 }
             }
@@ -1957,6 +2045,8 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 block.loadBitmap(context, contentWidth)
             } else if (block is KatexEquationBlock) {
                 block.loadBitmap(context, contentWidth)
+            } else if (block is Base64ImageBlock) {
+                block.loadBitmap()
             }
         }
 
@@ -3931,6 +4021,15 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     2. Structure Layout Style: $structureMode
                        - Q&A style: Structure as a thorough, question-by-question academic grid (e.g. "Q1: ...", "A1: ...") explaining every core concept.
                        - DEFINITION style: Structure as an extensive glossary/textbook encyclopedia defining and explaining every relevant technical term, theory, concept, and system.
+                       
+                    3. DIAGRAMS & ILLUSTRATIONS (MANDATORY):
+                       - If the concept involves any physical system, process, anatomy, flowchart, schematic, block diagram, graph, geometry, or visual illustration, you MUST use your Base64 engine to convert a suitable diagram image (or generate a visual schema) into a standard Base64 string.
+                       - Provide this diagram inline as a standard Markdown code block prefixed with '[Base64]' so the app can render it beautifully as an image block.
+                       - Example format:
+                       ```[Base64]
+                       [Base64]iVBORw0KGgoAAAANSUhEUgAAAAUA... (valid Base64 string representing the diagram)
+                       ```
+                       - Always output a valid Base64 string representation of the diagram with the prefix '[Base64]'. Do not include extra commentary or conversational lines inside the block.
                 """.trimIndent()
 
                 val finalResponse = StringBuilder()
@@ -4023,6 +4122,14 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                        - Use bold text for terms and definitions.
                        - Bulleted lists or standard Markdown tables (e.g. '| Parameter | Symbol | Meaning |' with separator rows) of all parameters / variable symbols used.
                     5. Ensure total precision: double check symbol signs, exponents, and subscript markers for absolute scientific correctness.
+                    6. DIAGRAMS & ILLUSTRATIONS (MANDATORY):
+                       - If a formula, circuit, system state, physical diagram, anatomy, flowchart, coordinate system, block structure, or visual schematic can help explain the formulas, you MUST use your Base64 engine to convert/generate a suitable diagram image into a standard Base64 string.
+                       - Provide this diagram inline as a standard Markdown code block prefixed with '[Base64]' so the app can render it beautifully as an image block.
+                       - Example format:
+                       ```[Base64]
+                       [Base64]iVBORw0KGgoAAAANSUhEUgAAAAUA... (valid Base64 string representing the diagram)
+                       ```
+                       - Always output a valid Base64 string representation of the diagram with the prefix '[Base64]'. Do not include extra commentary or conversational lines inside the block.
                 """.trimIndent()
 
                 val finalResponse = StringBuilder()
