@@ -5088,6 +5088,131 @@ fun SettingsCredentialsTab(viewModel: StudyMateViewModel) {
             }
         }
 
+        // Built-in Chat API Key Provider Selection Card
+        item {
+            val chatProvider by viewModel.chatApiProvider.collectAsStateWithLifecycle()
+            val openRouterKey by viewModel.openRouterApiKey.collectAsStateWithLifecycle()
+            val openRouterModel by viewModel.openRouterModelId.collectAsStateWithLifecycle()
+
+            Card(
+                modifier = Modifier.fillMaxWidth().testTag("card_chat_provider_settings"),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Chat,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Built-in Chat API Provider",
+                                fontWeight = FontWeight.Bold,
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "Select API key provider specifically for Built-In Chat (AI Teacher / Homework Helper).",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = chatProvider == "Google Gemini",
+                            onClick = { viewModel.updateChatApiProvider("Google Gemini") },
+                            label = { Text("Google Gemini") },
+                            leadingIcon = if (chatProvider == "Google Gemini") {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null,
+                            modifier = Modifier.weight(1f).testTag("chat_provider_google")
+                        )
+
+                        FilterChip(
+                            selected = chatProvider == "OpenRouter",
+                            onClick = { viewModel.updateChatApiProvider("OpenRouter") },
+                            label = { Text("OpenRouter") },
+                            leadingIcon = if (chatProvider == "OpenRouter") {
+                                { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                            } else null,
+                            modifier = Modifier.weight(1f).testTag("chat_provider_openrouter")
+                        )
+                    }
+
+                    if (chatProvider == "Google Gemini") {
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f))
+                        ) {
+                            Text(
+                                text = "✓ Using collected Gemini API Key from AI Studio Secrets / Backup Fallback Pool.",
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(10.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer
+                            )
+                        }
+                    } else {
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = openRouterKey,
+                                onValueChange = { viewModel.updateOpenRouterApiKey(it) },
+                                label = { Text("OpenRouter API Key (sk-or-v1-...)") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().testTag("openrouter_key_input")
+                            )
+
+                            OutlinedTextField(
+                                value = openRouterModel,
+                                onValueChange = { viewModel.updateOpenRouterModelId(it) },
+                                label = { Text("OpenRouter Model ID") },
+                                placeholder = { Text("e.g. google/gemini-2.0-flash-001") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().testTag("openrouter_model_input")
+                            )
+
+                            Text(
+                                text = "Quick Model suggestions:",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(
+                                    "google/gemini-2.0-flash-001",
+                                    "anthropic/claude-3.5-sonnet",
+                                    "deepseek/deepseek-r1"
+                                ).forEach { suggestion ->
+                                    AssistChip(
+                                        onClick = { viewModel.updateOpenRouterModelId(suggestion) },
+                                        label = { Text(suggestion.split("/").lastOrNull() ?: suggestion, fontSize = 10.sp) }
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         item {
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f))
@@ -5248,7 +5373,7 @@ fun LatexText(
     textAlign: TextAlign = TextAlign.Start
 ) {
     if (!hasMathDelimiters(text)) {
-        // Render natively with standard Text if no LaTeX equations are present to maintain high speed.
+        // Render natively with standard Text if no LaTeX equations or rich markdown are present.
         Text(
             text = text,
             modifier = modifier,
@@ -5266,16 +5391,42 @@ fun LatexText(
         val currentHtml = remember(text, hexColor, fontSizeSp, textAlign, isDark) {
             generateKatexHtml(text, hexColor, fontSizeSp, textAlign, isDark)
         }
+        val bodyHtml = remember(text) {
+            convertMarkdownToHtml(text)
+        }
+
+        var webViewHeightDp by remember { mutableStateOf(0) }
+        var isPageLoaded by remember { mutableStateOf(false) }
 
         AndroidView(
-            factory = { context ->
-                WebView(context).apply {
+            factory = { ctx ->
+                WebView(ctx).apply {
                     setBackgroundColor(0) // 100% transparent background
                     settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
+                        allowFileAccess = true
+                        useWideViewPort = false
                     }
-                    webViewClient = WebViewClient()
+                    addJavascriptInterface(object {
+                        @android.webkit.JavascriptInterface
+                        fun resize(heightPx: Float) {
+                            val density = ctx.resources.displayMetrics.density
+                            val dp = (heightPx / density).toInt() + 16
+                            if (dp > webViewHeightDp || dp < webViewHeightDp - 60) {
+                                (ctx as? android.app.Activity)?.runOnUiThread {
+                                    webViewHeightDp = dp
+                                }
+                            }
+                        }
+                    }, "Android")
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            isPageLoaded = true
+                            view?.evaluateJavascript("if (typeof renderAll === 'function') { renderAll(); } else if (typeof updateContentHeight === 'function') { updateContentHeight(); }", null)
+                        }
+                    }
                     layoutParams = ViewGroup.LayoutParams(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -5286,10 +5437,23 @@ fun LatexText(
                 val tag = webView.tag as? String
                 if (tag != currentHtml) {
                     webView.tag = currentHtml
-                    webView.loadDataWithBaseURL("https://localhost", currentHtml, "text/html", "UTF-8", null)
+                    val jsEscapedBody = bodyHtml
+                        .replace("\\", "\\\\")
+                        .replace("'", "\\'")
+                        .replace("\"", "\\\"")
+                        .replace("\n", "\\n")
+                        .replace("\r", "")
+                    
+                    if (isPageLoaded && tag != null) {
+                        webView.evaluateJavascript("if (typeof updateContent === 'function') { updateContent('$jsEscapedBody'); } else { location.reload(); }", null)
+                    } else {
+                        webView.loadDataWithBaseURL("https://localhost", currentHtml, "text/html", "UTF-8", null)
+                    }
                 }
             },
-            modifier = modifier.fillMaxWidth()
+            modifier = modifier
+                .fillMaxWidth()
+                .then(if (webViewHeightDp > 0) Modifier.height(webViewHeightDp.dp) else Modifier)
         )
     }
 }
@@ -5508,6 +5672,18 @@ fun generateKatexHtml(text: String, hexColor: String, fontSizeSp: Int, textAlign
         <body>
             <div id="content">$bodyHtml</div>
             <script>
+                function updateContentHeight() {
+                    var body = document.body;
+                    var html = document.documentElement;
+                    var height = Math.max(
+                        body.scrollHeight, body.offsetHeight,
+                        html.clientHeight, html.scrollHeight, html.offsetHeight
+                    );
+                    if (window.Android && window.Android.resize) {
+                        window.Android.resize(height);
+                    }
+                }
+
                 function tryRenderMath() {
                     if (typeof renderMathInElement !== 'undefined') {
                         renderMathInElement(document.body, {
@@ -5561,17 +5737,27 @@ fun generateKatexHtml(text: String, hexColor: String, fontSizeSp: Int, textAlign
                         setTimeout(tryRenderMermaid, 50);
                     }
                 }
+
+                function renderAll() {
+                    tryRenderMath();
+                    tryRenderMermaid();
+                    setTimeout(updateContentHeight, 50);
+                    setTimeout(updateContentHeight, 200);
+                    setTimeout(updateContentHeight, 600);
+                }
+
+                function updateContent(newHtml) {
+                    var el = document.getElementById('content');
+                    if (el) {
+                        el.innerHTML = newHtml;
+                        renderAll();
+                    }
+                }
                 
                 tryRenderMath();
                 tryRenderMermaid();
-                window.addEventListener('load', function() {
-                    tryRenderMath();
-                    tryRenderMermaid();
-                });
-                document.addEventListener('DOMContentLoaded', function() {
-                    tryRenderMath();
-                    tryRenderMermaid();
-                });
+                window.addEventListener('load', renderAll);
+                document.addEventListener('DOMContentLoaded', renderAll);
             </script>
         </body>
         </html>
@@ -5790,8 +5976,32 @@ fun buildHtmlCodeBlock(language: String, lines: List<String>): String {
         """.trimIndent()
     }
 
+    val isMermaid = language.lowercase().contains("mermaid") ||
+                    decodedContent.trim().startsWith("graph") ||
+                    decodedContent.trim().startsWith("flowchart") ||
+                    decodedContent.trim().startsWith("sequenceDiagram") ||
+                    decodedContent.trim().startsWith("classDiagram") ||
+                    decodedContent.trim().startsWith("stateDiagram") ||
+                    decodedContent.trim().startsWith("erDiagram") ||
+                    decodedContent.trim().startsWith("gantt") ||
+                    decodedContent.trim().startsWith("pie") ||
+                    decodedContent.trim().startsWith("gitGraph") ||
+                    decodedContent.trim().startsWith("mindmap") ||
+                    decodedContent.trim().startsWith("timeline")
+
+    if (isMermaid) {
+        val sanitized = sanitizeMermaid(decodedContent)
+        return """
+            <div class="mermaid-container">
+                <div class="mermaid">
+                    $sanitized
+                </div>
+            </div>
+        """.trimIndent()
+    }
+
     // If it contains [diagram] or is marked as a diagram language, simply avoid / ignore it
-    if (decodedContent.contains("[diagram]") || language.lowercase().contains("diagram")) {
+    if (decodedContent.contains("[diagram]") || (language.lowercase().contains("diagram") && !language.lowercase().contains("mermaid"))) {
         return ""
     }
 

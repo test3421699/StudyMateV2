@@ -258,14 +258,33 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
     private val _chaptersMap = MutableStateFlow<Map<String, List<String>>>(emptyMap())
     val chaptersMap: StateFlow<Map<String, List<String>>> = _chaptersMap.asStateFlow()
 
-    // Homework helper chat history
+    // Homework helper chat history & provider settings
     val selectedTeacherPersonality = MutableStateFlow("Friendly Teacher")
     val selectedExplanationLevel = MutableStateFlow("Intermediate")
     val selectedModel = MutableStateFlow(prefs.getString("selected_gemini_model", "gemini-3.5-flash") ?: "gemini-3.5-flash")
 
+    val chatApiProvider = MutableStateFlow(prefs.getString("chat_api_provider", "Google Gemini") ?: "Google Gemini")
+    val openRouterApiKey = MutableStateFlow(prefs.getString("openrouter_api_key", "") ?: "")
+    val openRouterModelId = MutableStateFlow(prefs.getString("openrouter_model_id", "google/gemini-2.0-flash-001") ?: "google/gemini-2.0-flash-001")
+
     fun updateSelectedModel(model: String) {
         selectedModel.value = model
         prefs.edit().putString("selected_gemini_model", model).apply()
+    }
+
+    fun updateChatApiProvider(provider: String) {
+        chatApiProvider.value = provider
+        prefs.edit().putString("chat_api_provider", provider).apply()
+    }
+
+    fun updateOpenRouterApiKey(key: String) {
+        openRouterApiKey.value = key
+        prefs.edit().putString("openrouter_api_key", key).apply()
+    }
+
+    fun updateOpenRouterModelId(modelId: String) {
+        openRouterModelId.value = modelId
+        prefs.edit().putString("openrouter_model_id", modelId).apply()
     }
 
     private val _chatHistory = MutableStateFlow<List<ChatMessage>>(
@@ -1123,6 +1142,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 <html>
                 <head>
                     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <script src="https://cdn.jsdelivr.net/npm/mermaid@9.4.3/dist/mermaid.min.js"></script>
                     <style>
                         html, body {
                             margin: 0;
@@ -1143,12 +1163,36 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                             align-items: center;
                             text-align: center;
                         }
+                        .mermaid-container {
+                            width: 100%;
+                            display: flex;
+                            justify-content: center;
+                        }
                     </style>
                 </head>
                 <body>
                     <div class="diagram-wrapper">
                         $htmlContent
                     </div>
+                    <script>
+                        if (typeof mermaid !== 'undefined') {
+                            mermaid.initialize({
+                                startOnLoad: false,
+                                theme: '${if (renderingPdfInDarkTheme) "dark" else "default"}',
+                                securityLevel: 'loose'
+                            });
+                            document.querySelectorAll('.mermaid').forEach(function(el) {
+                                try {
+                                    var text = el.textContent || el.innerText;
+                                    text = text.replace(/<br\s*\/?>/gi, '\n').replace(/&nbsp;/g, ' ');
+                                    el.textContent = text;
+                                    mermaid.init(undefined, el);
+                                } catch(e) {
+                                    console.error(e);
+                                }
+                            });
+                        }
+                    </script>
                 </body>
                 </html>
                 """.trimIndent()
@@ -1290,7 +1334,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         private var loadedBitmap: android.graphics.Bitmap? = null
         private var isLoadAttempted = false
 
-        suspend fun loadBitmap(context: Context, width: Int) {
+            suspend fun loadBitmap(context: Context, width: Int) {
             if (isLoadAttempted) return
             isLoadAttempted = true
             
@@ -1305,7 +1349,32 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 cleanCode = cleanCode.substring("[diagram]".length).trim()
             }
             
-            loadedBitmap = renderHtmlToBitmap(cleanCode, width, 800, context)
+            val isMermaid = htmlContent.lowercase().contains("mermaid") ||
+                            cleanCode.trim().startsWith("graph") ||
+                            cleanCode.trim().startsWith("flowchart") ||
+                            cleanCode.trim().startsWith("sequenceDiagram") ||
+                            cleanCode.trim().startsWith("classDiagram") ||
+                            cleanCode.trim().startsWith("stateDiagram") ||
+                            cleanCode.trim().startsWith("erDiagram") ||
+                            cleanCode.trim().startsWith("gantt") ||
+                            cleanCode.trim().startsWith("pie") ||
+                            cleanCode.trim().startsWith("gitGraph") ||
+                            cleanCode.trim().startsWith("mindmap") ||
+                            cleanCode.trim().startsWith("timeline")
+
+            val htmlToRender = if (isMermaid) {
+                """
+                <div class="mermaid-container" style="width:100%; display:flex; justify-content:center; padding:16px;">
+                    <div class="mermaid" style="max-width:100%;">
+                        $cleanCode
+                    </div>
+                </div>
+                """.trimIndent()
+            } else {
+                cleanCode
+            }
+
+            loadedBitmap = renderHtmlToBitmap(htmlToRender, width, 800, context)
         }
 
         private val cleanLines: List<String> by lazy {
@@ -2023,7 +2092,7 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
 
     private suspend fun writeTextAsPdfToStream(context: android.content.Context, title: String, textContent: String, outputStream: java.io.OutputStream, isDarkTheme: Boolean = false) {
         renderingPdfInDarkTheme = isDarkTheme
-        val wrappedText = textContent // No autoWrapRawMermaid needed anymore since we do pure html/css diagrams
+        val wrappedText = autoWrapRawMermaid(textContent)
         val pdfDocument = android.graphics.pdf.PdfDocument()
         val pageWidth = 595 // Standard A4 Width
         val pageHeight = 842 // Standard A4 Height
@@ -3112,6 +3181,66 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
         return loadedItems.sortedBy { it.first }.map { it.second }
     }
 
+    private suspend fun buildOpenRouterJsonPayload(
+        systemPrompt: String,
+        question: String,
+        imageBitmap: Bitmap?
+    ): String = withContext(Dispatchers.IO) {
+        val root = JSONObject()
+        root.put("model", openRouterModelId.value.trim().ifBlank { "google/gemini-2.0-flash-001" })
+        root.put("stream", true)
+
+        val messages = JSONArray()
+
+        // System message
+        val systemMsg = JSONObject()
+        systemMsg.put("role", "system")
+        systemMsg.put("content", systemPrompt)
+        messages.put(systemMsg)
+
+        // Historical turns
+        var isUserTurn = true
+        for (turn in conversationTurns) {
+            val msgObj = JSONObject()
+            msgObj.put("role", if (isUserTurn) "user" else "assistant")
+            val textContent = turn.parts.mapNotNull { it.text }.joinToString("\n")
+            msgObj.put("content", textContent)
+            messages.put(msgObj)
+            isUserTurn = !isUserTurn
+        }
+
+        // Current question if conversation turns didn't already append it
+        val currentMsg = JSONObject()
+        currentMsg.put("role", "user")
+
+        if (imageBitmap != null) {
+            val contentArray = JSONArray()
+            val textObj = JSONObject()
+            textObj.put("type", "text")
+            textObj.put("text", question)
+            contentArray.put(textObj)
+
+            val out = ByteArrayOutputStream()
+            imageBitmap.compress(Bitmap.CompressFormat.JPEG, 70, out)
+            val base64Img = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+
+            val imgObj = JSONObject()
+            imgObj.put("type", "image_url")
+            val urlObj = JSONObject()
+            urlObj.put("url", "data:image/jpeg;base64,$base64Img")
+            imgObj.put("image_url", urlObj)
+            contentArray.put(imgObj)
+
+            currentMsg.put("content", contentArray)
+        } else {
+            currentMsg.put("content", question)
+        }
+        messages.put(currentMsg)
+
+        root.put("messages", messages)
+        root.toString()
+    }
+
     // --- AI Homework Chat ---
     fun askHomeworkHelper(question: String, imageBitmap: Bitmap?, localUriPath: String? = null) {
         viewModelScope.launch {
@@ -3177,37 +3306,59 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 var accumulatedResponse = ""
-                executeWithFallback { apiKey ->
-                    val request = GeminiRequest(
-                        contents = requestContents,
-                        generationConfig = GeminiGenerationConfig(temperature = 0.4f)
-                    )
-                    var displayedText = ""
-                    GeminiNetwork.streamGenerateContent(apiKey, request).collect { chunk ->
+                var lastUpdateMs = 0L
+
+                if (chatApiProvider.value == "OpenRouter") {
+                    val orKey = openRouterApiKey.value.trim()
+                    if (orKey.isEmpty()) {
+                        throw Exception("OpenRouter API key is empty. Please configure your OpenRouter API key in the Keys tab.")
+                    }
+                    val payload = buildOpenRouterJsonPayload(systemPrompt, question, imageBitmap)
+                    OpenRouterNetwork.streamChatCompletions(orKey, payload).collect { chunk ->
                         accumulatedResponse += chunk
-                        while (displayedText.length < accumulatedResponse.length) {
-                            val increment = (accumulatedResponse.length - displayedText.length).coerceAtMost(3)
-                            displayedText += accumulatedResponse.substring(displayedText.length, displayedText.length + increment)
+                        val now = System.currentTimeMillis()
+                        if (now - lastUpdateMs > 60L) {
+                            lastUpdateMs = now
+                            val currentText = accumulatedResponse
                             withContext(Dispatchers.Main) {
                                 _chatHistory.value = _chatHistory.value.map { msg ->
-                                    if (msg.id == geminiMsgId) msg.copy(text = displayedText) else msg
+                                    if (msg.id == geminiMsgId) msg.copy(text = currentText) else msg
                                 }
                             }
-                            kotlinx.coroutines.delay(10)
                         }
                     }
-                    if (displayedText != accumulatedResponse) {
-                        displayedText = accumulatedResponse
-                        withContext(Dispatchers.Main) {
-                            _chatHistory.value = _chatHistory.value.map { msg ->
-                                if (msg.id == geminiMsgId) msg.copy(text = displayedText) else msg
+                } else {
+                    executeWithFallback { apiKey ->
+                        val request = GeminiRequest(
+                            contents = requestContents,
+                            generationConfig = GeminiGenerationConfig(temperature = 0.4f)
+                        )
+                        GeminiNetwork.streamGenerateContent(apiKey, request).collect { chunk ->
+                            accumulatedResponse += chunk
+                            val now = System.currentTimeMillis()
+                            if (now - lastUpdateMs > 60L) {
+                                lastUpdateMs = now
+                                val currentText = accumulatedResponse
+                                withContext(Dispatchers.Main) {
+                                    _chatHistory.value = _chatHistory.value.map { msg ->
+                                        if (msg.id == geminiMsgId) msg.copy(text = currentText) else msg
+                                    }
+                                }
                             }
                         }
+                        if (accumulatedResponse.isEmpty()) {
+                            throw Exception("Streaming did not return any text candidates")
+                        }
+                        true
                     }
-                    if (accumulatedResponse.isEmpty()) {
-                        throw Exception("Streaming did not return any text candidates")
+                }
+
+                // Final sync update ensuring 100% complete response is rendered
+                val finalText = accumulatedResponse
+                withContext(Dispatchers.Main) {
+                    _chatHistory.value = _chatHistory.value.map { msg ->
+                        if (msg.id == geminiMsgId) msg.copy(text = finalText) else msg
                     }
-                    true
                 }
 
                 // Add AI answer to history context
@@ -3304,37 +3455,59 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                 }
 
                 var accumulatedResponse = ""
-                executeWithFallback { apiKey ->
-                    val request = GeminiRequest(
-                        contents = requestContents,
-                        generationConfig = GeminiGenerationConfig(temperature = 0.4f)
-                    )
-                    var displayedText = ""
-                    GeminiNetwork.streamGenerateContent(apiKey, request).collect { chunk ->
+                var lastUpdateMs = 0L
+
+                if (chatApiProvider.value == "OpenRouter") {
+                    val orKey = openRouterApiKey.value.trim()
+                    if (orKey.isEmpty()) {
+                        throw Exception("OpenRouter API key is empty. Please configure your OpenRouter API key in the Keys tab.")
+                    }
+                    val payload = buildOpenRouterJsonPayload(systemPrompt, question, imageBitmap)
+                    OpenRouterNetwork.streamChatCompletions(orKey, payload).collect { chunk ->
                         accumulatedResponse += chunk
-                        while (displayedText.length < accumulatedResponse.length) {
-                            val increment = (accumulatedResponse.length - displayedText.length).coerceAtMost(3)
-                            displayedText += accumulatedResponse.substring(displayedText.length, displayedText.length + increment)
+                        val now = System.currentTimeMillis()
+                        if (now - lastUpdateMs > 60L) {
+                            lastUpdateMs = now
+                            val currentText = accumulatedResponse
                             withContext(Dispatchers.Main) {
                                 _chatHistory.value = _chatHistory.value.map { msg ->
-                                    if (msg.id == geminiMsgId) msg.copy(text = displayedText) else msg
+                                    if (msg.id == geminiMsgId) msg.copy(text = currentText) else msg
                                 }
                             }
-                            kotlinx.coroutines.delay(10)
                         }
                     }
-                    if (displayedText != accumulatedResponse) {
-                        displayedText = accumulatedResponse
-                        withContext(Dispatchers.Main) {
-                            _chatHistory.value = _chatHistory.value.map { msg ->
-                                if (msg.id == geminiMsgId) msg.copy(text = displayedText) else msg
+                } else {
+                    executeWithFallback { apiKey ->
+                        val request = GeminiRequest(
+                            contents = requestContents,
+                            generationConfig = GeminiGenerationConfig(temperature = 0.4f)
+                        )
+                        GeminiNetwork.streamGenerateContent(apiKey, request).collect { chunk ->
+                            accumulatedResponse += chunk
+                            val now = System.currentTimeMillis()
+                            if (now - lastUpdateMs > 60L) {
+                                lastUpdateMs = now
+                                val currentText = accumulatedResponse
+                                withContext(Dispatchers.Main) {
+                                    _chatHistory.value = _chatHistory.value.map { msg ->
+                                        if (msg.id == geminiMsgId) msg.copy(text = currentText) else msg
+                                    }
+                                }
                             }
                         }
+                        if (accumulatedResponse.isEmpty()) {
+                            throw Exception("Streaming did not return any text candidates")
+                        }
+                        true
                     }
-                    if (accumulatedResponse.isEmpty()) {
-                        throw Exception("Streaming did not return any text candidates")
+                }
+
+                // Final sync update ensuring 100% complete response is rendered
+                val finalText = accumulatedResponse
+                withContext(Dispatchers.Main) {
+                    _chatHistory.value = _chatHistory.value.map { msg ->
+                        if (msg.id == geminiMsgId) msg.copy(text = finalText) else msg
                     }
-                    true
                 }
 
                 conversationTurns.add(GeminiContent(listOf(GeminiPart(text = accumulatedResponse))))
@@ -4022,8 +4195,17 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                        - Q&A style: Structure as a thorough, question-by-question academic grid (e.g. "Q1: ...", "A1: ...") explaining every core concept.
                        - DEFINITION style: Structure as an extensive glossary/textbook encyclopedia defining and explaining every relevant technical term, theory, concept, and system.
                        
-                    3. DIAGRAMS & ILLUSTRATIONS (MANDATORY):
-                       - If the concept involves any physical system, process, anatomy, flowchart, schematic, block diagram, graph, geometry, or visual illustration, you MUST use your Base64 engine to convert a suitable diagram image (or generate a visual schema) into a standard Base64 string.
+                    3. MERMAID DIAGRAMS & FLOWCHARTS (MANDATORY):
+                       - Whenever explaining any process, sequence, workflow, hierarchy, concept relationship, state machine, architecture, or system structure, you MUST generate clean, valid Mermaid diagrams wrapped in ```mermaid ... ``` markdown blocks (e.g., flowchart TD, graph LR, sequenceDiagram, mindmap, classDiagram, stateDiagram).
+                       - Example format:
+                       ```mermaid
+                       flowchart TD
+                           A[Concept Start] --> B[Process Step]
+                           B --> C[Result Outcome]
+                       ```
+
+                    4. BASE64 DIAGRAMS & ILLUSTRATIONS (MANDATORY):
+                       - If the concept involves any physical system, anatomy, flowchart, schematic, block diagram, graph, geometry, or visual illustration, you MUST use your Base64 engine to convert a suitable diagram image (or generate a visual schema) into a standard Base64 string.
                        - Provide this diagram inline as a standard Markdown code block prefixed with '[Base64]' so the app can render it beautifully as an image block.
                        - Example format:
                        ```[Base64]
@@ -4122,7 +4304,9 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                        - Use bold text for terms and definitions.
                        - Bulleted lists or standard Markdown tables (e.g. '| Parameter | Symbol | Meaning |' with separator rows) of all parameters / variable symbols used.
                     5. Ensure total precision: double check symbol signs, exponents, and subscript markers for absolute scientific correctness.
-                    6. DIAGRAMS & ILLUSTRATIONS (MANDATORY):
+                    6. MERMAID DIAGRAMS & FLOWCHARTS:
+                       - Whenever explaining process steps, formula derivations, system states, or physical relationships, generate clean Mermaid diagrams wrapped in ```mermaid ... ``` code blocks.
+                    7. BASE64 DIAGRAMS & ILLUSTRATIONS (MANDATORY):
                        - If a formula, circuit, system state, physical diagram, anatomy, flowchart, coordinate system, block structure, or visual schematic can help explain the formulas, you MUST use your Base64 engine to convert/generate a suitable diagram image into a standard Base64 string.
                        - Provide this diagram inline as a standard Markdown code block prefixed with '[Base64]' so the app can render it beautifully as an image block.
                        - Example format:
