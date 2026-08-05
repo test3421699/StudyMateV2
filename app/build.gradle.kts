@@ -11,7 +11,7 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
-    applicationId = "com.aistudio.studymatepro.wvkdyh.v6"
+    applicationId = "com.aistudio.studymatepro.wvkdyh.v7"
     minSdk = 24
     targetSdk = 36
     versionCode = 1
