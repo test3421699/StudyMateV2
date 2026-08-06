@@ -5844,6 +5844,16 @@ fun sanitizeMermaid(raw: String): String {
     return formattedLines.joinToString("\n")
 }
 
+fun generateMermaidInkUrl(code: String, theme: String = "default"): String {
+    val cleanCode = code.trim()
+    val bytes = cleanCode.toByteArray(Charsets.UTF_8)
+    val base64Url = android.util.Base64.encodeToString(
+        bytes,
+        android.util.Base64.URL_SAFE or android.util.Base64.NO_WRAP or android.util.Base64.NO_PADDING
+    ).trim()
+    return "https://mermaid.ink/svg/$base64Url?theme=$theme"
+}
+
 fun buildHtmlCodeBlock(language: String, lines: List<String>): String {
     val rawCodeContent = lines.joinToString("\n")
     
@@ -5887,9 +5897,11 @@ fun buildHtmlCodeBlock(language: String, lines: List<String>): String {
 
     if (isMermaid) {
         val sanitized = sanitizeMermaid(decodedContent)
+        val mermaidInkUrl = generateMermaidInkUrl(sanitized)
         return """
-            <div class="mermaid-container">
-                <div class="mermaid">
+            <div class="mermaid-container" style="width:100%; max-width:100%; margin:16px 0; border-radius:12px; background-color:#1e1e2d; border:1.5px solid #8E75FF; padding:16px; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; overflow-x:auto;">
+                <img src="$mermaidInkUrl" style="max-width:100%; height:auto; border-radius:8px;" alt="Study Diagram" onError="this.style.display='none'; if(this.nextElementSibling) this.nextElementSibling.style.display='block';" />
+                <div class="mermaid" style="display:none; width:100%;">
                     $sanitized
                 </div>
             </div>
@@ -6171,12 +6183,50 @@ fun autoWrapRawMermaid(text: String): String {
 
 fun convertMarkdownToHtml(text: String): String {
     val wrappedText = autoWrapRawMermaid(text)
-    var formattedHtml = wrappedText.replace("\r", "")
+    val lines = wrappedText.lines()
+    
+    val processedHtmlBlocks = mutableListOf<String>()
+    val placeholderTextBuilder = java.lang.StringBuilder()
+    
+    var inCodeBlock = false
+    var codeLanguage = ""
+    val codeLines = mutableListOf<String>()
+    
+    for (line in lines) {
+        val trimmed = line.trim()
+        if (trimmed.startsWith("```")) {
+            if (!inCodeBlock) {
+                inCodeBlock = true
+                codeLanguage = trimmed.substring(3).trim()
+                codeLines.clear()
+            } else {
+                val htmlBlock = buildHtmlCodeBlock(codeLanguage, codeLines)
+                val index = processedHtmlBlocks.size
+                processedHtmlBlocks.add(htmlBlock)
+                placeholderTextBuilder.append("___CODE_BLOCK_PLACEHOLDER_").append(index).append("___\n")
+                inCodeBlock = false
+            }
+        } else {
+            if (inCodeBlock) {
+                codeLines.add(line)
+            } else {
+                placeholderTextBuilder.append(line).append("\n")
+            }
+        }
+    }
+    
+    if (inCodeBlock && codeLines.isNotEmpty()) {
+        val htmlBlock = buildHtmlCodeBlock(codeLanguage, codeLines)
+        val index = processedHtmlBlocks.size
+        processedHtmlBlocks.add(htmlBlock)
+        placeholderTextBuilder.append("___CODE_BLOCK_PLACEHOLDER_").append(index).append("___\n")
+    }
+
+    var formattedHtml = placeholderTextBuilder.toString().replace("\r", "")
         .replace("&", "&amp;")
         .replace("<", "&lt;")
         .replace(">", "&gt;")
 
-    formattedHtml = parseCodeBlocksToHtml(formattedHtml)
     formattedHtml = parseMarkdownTablesToHtml(formattedHtml)
 
     val boldRegex = "\\*\\*(.*?)\\*\\*".toRegex()
@@ -6233,6 +6283,13 @@ fun convertMarkdownToHtml(text: String): String {
     }
 
     formattedHtml = formattedHtml.replace("\r\n", "<br>").replace("\n", "<br>")
+
+    for (i in processedHtmlBlocks.indices) {
+        val placeholder = "___CODE_BLOCK_PLACEHOLDER_${i}___"
+        val placeholderBr = "___CODE_BLOCK_PLACEHOLDER_${i}___<br>"
+        formattedHtml = formattedHtml.replace(placeholderBr, processedHtmlBlocks[i])
+            .replace(placeholder, processedHtmlBlocks[i])
+    }
 
     return formattedHtml
 }

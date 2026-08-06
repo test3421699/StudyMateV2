@@ -1376,12 +1376,28 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
 
             val htmlToRender = if (isMermaid) {
                 val sanitizedCode = sanitizeMermaid(cleanCode)
+                val themeStr = if (renderingPdfInDarkTheme) "dark" else "default"
+                val mermaidUrl = generateMermaidInkUrl(sanitizedCode, themeStr)
                 """
-                <div class="mermaid-container" style="width:100%; display:flex; justify-content:center; padding:16px;">
-                    <div class="mermaid" style="max-width:100%;">
-                        $sanitizedCode
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                    <style>
+                        html, body {
+                            margin: 0; padding: 12px;
+                            background-color: ${if (renderingPdfInDarkTheme) "#1e1e2d" else "#FFFFFF"};
+                            display: flex; justify-content: center; align-items: center;
+                        }
+                        img { max-width: 100%; height: auto; border-radius: 8px; }
+                    </style>
+                </head>
+                <body>
+                    <div style="width:100%; text-align:center;">
+                        <img src="$mermaidUrl" style="max-width:100%; height:auto;" />
                     </div>
-                </div>
+                </body>
+                </html>
                 """.trimIndent()
             } else {
                 cleanCode
@@ -5043,6 +5059,12 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                         put("user_registered_email", prefs.getString("user_registered_email", ""))
                         put("user_registered_p", prefs.getString("user_registered_p", ""))
                         
+                        // AI & OpenRouter API Settings
+                        put("chat_api_provider", prefs.getString("chat_api_provider", "Google Gemini"))
+                        put("openrouter_api_key", prefs.getString("openrouter_api_key", ""))
+                        put("openrouter_model_id", prefs.getString("openrouter_model_id", "google/gemini-2.0-flash-001"))
+                        put("selected_gemini_model", prefs.getString("selected_gemini_model", "gemini-3.5-flash"))
+                        
                         val subjArr = JSONArray()
                         prefs.getStringSet("subjects", emptySet())?.forEach { subjArr.put(it) }
                         put("subjects", subjArr)
@@ -5316,6 +5338,23 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     editor.putString("user_email", prefsJson.optString("user_email", ""))
                     editor.putString("user_registered_email", prefsJson.optString("user_registered_email", ""))
                     editor.putString("user_registered_p", prefsJson.optString("user_registered_p", ""))
+                    
+                    val provider = prefsJson.optString("chat_api_provider", "Google Gemini")
+                    val openRouterKey = prefsJson.optString("openrouter_api_key", "")
+                    val openRouterModel = prefsJson.optString("openrouter_model_id", "google/gemini-2.0-flash-001")
+                    val geminiModel = prefsJson.optString("selected_gemini_model", "gemini-3.5-flash")
+
+                    editor.putString("chat_api_provider", provider)
+                    editor.putString("openrouter_api_key", openRouterKey)
+                    editor.putString("openrouter_model_id", openRouterModel)
+                    editor.putString("selected_gemini_model", geminiModel)
+
+                    withContext(Dispatchers.Main) {
+                        chatApiProvider.value = provider
+                        openRouterApiKey.value = openRouterKey
+                        openRouterModelId.value = openRouterModel
+                        selectedModel.value = geminiModel
+                    }
                     
                     val subjArr = prefsJson.optJSONArray("subjects")
                     if (subjArr != null) {
