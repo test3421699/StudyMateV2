@@ -3294,6 +3294,10 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     - Expert: Speak at a collegiate, scholarly level. Deliver deep, advanced, technically complete, and rigorous explanations. Detail underlying mathematical theory, physical laws, edge cases, scientific nuances, and advanced practical implementations.
                     
                     Adopt the teacher style and comprehension level perfectly in your output response.
+                    
+                    DIAGRAMS & VISUAL SCHEMATICS INSTRUCTIONS:
+                    - Whenever explaining processes, workflows, system architectures, physical setups, anatomical structures, sequences, mindmaps, state transitions, circuits, or concept relationships, generate clean, fully functional Mermaid diagrams wrapped in ```mermaid ... ``` markdown code blocks.
+                    - DO NOT output Base64 string representations or image binary blocks under any circumstances. Always provide standard, valid, fully functional Mermaid diagram code so the app can render live interactive diagrams.
                 """.trimIndent()
 
                 val requestContents = listOf(
@@ -3443,6 +3447,10 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     - Expert: Speak at a collegiate, scholarly level. Deliver deep, advanced, technically complete, and rigorous explanations. Detail underlying mathematical theory, physical laws, edge cases, scientific nuances, and advanced practical implementations.
                     
                     Adopt the teacher style and comprehension level perfectly in your output response.
+                    
+                    DIAGRAMS & VISUAL SCHEMATICS INSTRUCTIONS:
+                    - Whenever explaining processes, workflows, system architectures, physical setups, anatomical structures, sequences, mindmaps, state transitions, circuits, or concept relationships, generate clean, fully functional Mermaid diagrams wrapped in ```mermaid ... ``` markdown code blocks.
+                    - DO NOT output Base64 string representations or image binary blocks under any circumstances. Always provide standard, valid, fully functional Mermaid diagram code so the app can render live interactive diagrams.
                 """.trimIndent()
 
                 val requestContents = listOf(
@@ -4204,14 +4212,9 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                            B --> C[Result Outcome]
                        ```
 
-                    4. BASE64 DIAGRAMS & ILLUSTRATIONS (MANDATORY):
-                       - If the concept involves any physical system, anatomy, flowchart, schematic, block diagram, graph, geometry, or visual illustration, you MUST use your Base64 engine to convert a suitable diagram image (or generate a visual schema) into a standard Base64 string.
-                       - Provide this diagram inline as a standard Markdown code block prefixed with '[Base64]' so the app can render it beautifully as an image block.
-                       - Example format:
-                       ```[Base64]
-                       [Base64]iVBORw0KGgoAAAANSUhEUgAAAAUA... (valid Base64 string representing the diagram)
-                       ```
-                       - Always output a valid Base64 string representation of the diagram with the prefix '[Base64]'. Do not include extra commentary or conversational lines inside the block.
+                    4. FULLY FUNCTIONAL MERMAID DIAGRAMS & ILLUSTRATIONS (MANDATORY):
+                       - If the concept involves any physical system, anatomy, flowchart, schematic, block diagram, graph, geometry, circuit, state machine, or visual illustration, you MUST generate clean, fully functional Mermaid diagrams wrapped in ```mermaid ... ``` markdown code blocks.
+                       - DO NOT output Base64 string representations, image binary strings, or `[Base64]` prefixes under any circumstances. Always use standard syntax for Mermaid flowcharts, sequence diagrams, state diagrams, class diagrams, or mindmaps. Ensure the Mermaid syntax is strictly valid and complete.
                 """.trimIndent()
 
                 val finalResponse = StringBuilder()
@@ -4306,14 +4309,9 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                     5. Ensure total precision: double check symbol signs, exponents, and subscript markers for absolute scientific correctness.
                     6. MERMAID DIAGRAMS & FLOWCHARTS:
                        - Whenever explaining process steps, formula derivations, system states, or physical relationships, generate clean Mermaid diagrams wrapped in ```mermaid ... ``` code blocks.
-                    7. BASE64 DIAGRAMS & ILLUSTRATIONS (MANDATORY):
-                       - If a formula, circuit, system state, physical diagram, anatomy, flowchart, coordinate system, block structure, or visual schematic can help explain the formulas, you MUST use your Base64 engine to convert/generate a suitable diagram image into a standard Base64 string.
-                       - Provide this diagram inline as a standard Markdown code block prefixed with '[Base64]' so the app can render it beautifully as an image block.
-                       - Example format:
-                       ```[Base64]
-                       [Base64]iVBORw0KGgoAAAANSUhEUgAAAAUA... (valid Base64 string representing the diagram)
-                       ```
-                       - Always output a valid Base64 string representation of the diagram with the prefix '[Base64]'. Do not include extra commentary or conversational lines inside the block.
+                    7. FULLY FUNCTIONAL MERMAID DIAGRAMS & ILLUSTRATIONS (MANDATORY):
+                       - If a formula, circuit, system state, physical diagram, anatomy, flowchart, coordinate system, block structure, or visual schematic can help explain the formulas or derivations, you MUST generate clean, fully functional Mermaid diagrams wrapped in ```mermaid ... ``` markdown code blocks.
+                       - DO NOT output Base64 string representations, image binary strings, or `[Base64]` prefixes under any circumstances. Always use standard syntax for Mermaid flowcharts, sequence diagrams, state diagrams, class diagrams, or mindmaps. Ensure the Mermaid syntax is strictly valid and complete.
                 """.trimIndent()
 
                 val finalResponse = StringBuilder()
