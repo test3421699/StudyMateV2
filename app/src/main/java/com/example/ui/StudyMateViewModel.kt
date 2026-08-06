@@ -1175,23 +1175,35 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                         $htmlContent
                     </div>
                     <script>
-                        if (typeof mermaid !== 'undefined') {
-                            mermaid.initialize({
-                                startOnLoad: false,
-                                theme: '${if (renderingPdfInDarkTheme) "dark" else "default"}',
-                                securityLevel: 'loose'
-                            });
-                            document.querySelectorAll('.mermaid').forEach(function(el) {
+                        function renderAllMermaid() {
+                            if (typeof mermaid !== 'undefined') {
                                 try {
-                                    var text = el.textContent || el.innerText;
-                                    text = text.replace(/<br\s*\/?>/gi, '\n').replace(/&nbsp;/g, ' ');
+                                    mermaid.initialize({
+                                        startOnLoad: false,
+                                        theme: '${if (renderingPdfInDarkTheme) "dark" else "default"}',
+                                        securityLevel: 'loose',
+                                        flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+                                    });
+                                } catch(e){}
+                                document.querySelectorAll('.mermaid').forEach(function(el) {
+                                    var text = el.textContent || el.innerText || "";
+                                    text = text.trim().replace(/<br\s*\/?>/gi, '\n').replace(/&nbsp;/g, ' ');
                                     el.textContent = text;
-                                    mermaid.init(undefined, el);
-                                } catch(e) {
-                                    console.error(e);
-                                }
-                            });
+                                    try {
+                                        mermaid.init(undefined, el);
+                                    } catch(err) {
+                                        console.warn(err);
+                                        try {
+                                            var encoded = btoa(unescape(encodeURIComponent(text)));
+                                            el.innerHTML = "<div style='text-align:center; padding:12px;'><img src='https://mermaid.ink/svg/" + encoded + "' style='max-width:100%; height:auto;' /></div>";
+                                        } catch(e2){}
+                                    }
+                                });
+                            } else {
+                                setTimeout(renderAllMermaid, 50);
+                            }
                         }
+                        renderAllMermaid();
                     </script>
                 </body>
                 </html>
@@ -1363,10 +1375,11 @@ class StudyMateViewModel(application: Application) : AndroidViewModel(applicatio
                             cleanCode.trim().startsWith("timeline")
 
             val htmlToRender = if (isMermaid) {
+                val sanitizedCode = sanitizeMermaid(cleanCode)
                 """
                 <div class="mermaid-container" style="width:100%; display:flex; justify-content:center; padding:16px;">
                     <div class="mermaid" style="max-width:100%;">
-                        $cleanCode
+                        $sanitizedCode
                     </div>
                 </div>
                 """.trimIndent()

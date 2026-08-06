@@ -5473,7 +5473,20 @@ fun hasMathDelimiters(text: String): Boolean {
            text.contains("|") ||
            text.contains("```") ||
            text.contains("`") ||
-           text.contains("\n>")
+           text.contains("\n>") ||
+           text.contains("graph TD") ||
+           text.contains("graph LR") ||
+           text.contains("graph BT") ||
+           text.contains("graph RL") ||
+           text.contains("graph ") ||
+           text.contains("flowchart") ||
+           text.contains("sequenceDiagram") ||
+           text.contains("classDiagram") ||
+           text.contains("stateDiagram") ||
+           text.contains("mindmap") ||
+           text.contains("-->") ||
+           text.contains("==>") ||
+           text.contains("-.->")
 }
 
 fun generateKatexHtml(text: String, hexColor: String, fontSizeSp: Int, textAlign: TextAlign, isDark: Boolean): String {
@@ -5703,34 +5716,34 @@ fun generateKatexHtml(text: String, hexColor: String, fontSizeSp: Int, textAlign
                 
                 function tryRenderMermaid() {
                     if (typeof mermaid !== 'undefined') {
-                        mermaid.initialize({
-                            startOnLoad: false,
-                            theme: 'dark',
-                            securityLevel: 'loose'
-                        });
-                        mermaid.parseError = function(err, hash) {
-                            console.warn("Mermaid parse error ignored: ", err);
-                        };
-                        var unprocessed = [];
+                        try {
+                            mermaid.initialize({
+                                startOnLoad: false,
+                                theme: isDark ? 'dark' : 'default',
+                                securityLevel: 'loose',
+                                flowchart: { useMaxWidth: true, htmlLabels: true, curve: 'basis' }
+                            });
+                        } catch(e) {}
+                        
                         document.querySelectorAll('.mermaid').forEach(function(el) {
                             if (!el.getAttribute('data-processed')) {
-                                let html = el.innerHTML;
-                                html = html.replace(/<br\s*\/?>/gi, '\n');
-                                html = html.replace(/&nbsp;/g, ' ');
-                                var temp = document.createElement('div');
-                                temp.innerHTML = html;
-                                el.textContent = temp.textContent || temp.innerText;
                                 el.setAttribute('data-processed', 'true');
-                                unprocessed.push(el);
-                            }
-                        });
-                        unprocessed.forEach(function(el) {
-                            try {
-                                mermaid.init(undefined, el);
-                            } catch (err) {
-                                console.error("Individual mermaid init failed: ", err);
-                                var text = el.textContent || "";
-                                el.innerHTML = "<div style='color: #ff6b6b; font-size: 0.85em; padding: 10px; border: 1px dashed #ff6b6b; border-radius: 4px; text-align: left;'>[Unable to render diagram due to a Mermaid syntax error. Raw text below:]<pre style='margin: 8px 0 0 0; font-family: monospace; font-size: 0.9em; color: #ffd000; overflow-x: auto; white-space: pre-wrap;'>" + text + "</pre></div>";
+                                var rawText = el.textContent || el.innerText || "";
+                                rawText = rawText.trim().replace(/<br\s*\/?>/gi, '\n').replace(/&nbsp;/g, ' ');
+                                el.textContent = rawText;
+                                
+                                try {
+                                    mermaid.init(undefined, el);
+                                } catch (err) {
+                                    console.warn("Mermaid init failed, trying SVG image fallback: ", err);
+                                    try {
+                                        var encoded = btoa(unescape(encodeURIComponent(rawText)));
+                                        var imgUrl = "https://mermaid.ink/svg/" + encoded;
+                                        el.innerHTML = "<div style='text-align:center; padding:12px;'><img src='" + imgUrl + "' style='max-width:100%; height:auto; border-radius:8px;' alt='Mermaid Diagram' onerror='this.onerror=null; this.parentElement.innerHTML=\"<pre style=\\\"color:#ffd000; font-family:monospace; white-space:pre-wrap;\\\">\" + rawText + \"</pre>\";' /></div>";
+                                    } catch (e2) {
+                                        console.error("Fallback failed: ", e2);
+                                    }
+                                }
                             }
                         });
                     } else {
@@ -5764,188 +5777,71 @@ fun generateKatexHtml(text: String, hexColor: String, fontSizeSp: Int, textAlign
     """.trimIndent()
 }
 
-fun formatSingleLineMermaid(rawCode: String): String {
-    // If the raw code is already multiline (contains multiple non-empty lines), don't alter its line breaks.
-    val lines = rawCode.lines().filter { it.trim().isNotEmpty() }
-    if (lines.size > 2) {
-        return rawCode
-    }
-    
-    // It is a single line or has very few lines. Let's split it into clean lines!
-    var code = rawCode.replace("\n", " ").replace("\r", " ").trim()
-    
-    // Let's replace multiple spaces with a single space to clean it up
-    code = code.replace(Regex("\\s+"), " ")
-    
-    // We want to insert a newline before certain keywords and statements.
-    // Let's first put placeholders or directly insert newlines.
-    
-    // Insert newline before 'subgraph'
-    code = code.replace(Regex("(?i)\\bsubgraph\\b"), "\nsubgraph")
-    
-    // Insert newline before 'end' (when it is a standalone word)
-    code = code.replace(Regex("(?i)\\bend\\b"), "\nend")
-    
-    // Insert newline before 'style'
-    code = code.replace(Regex("(?i)\\bstyle\\b"), "\nstyle")
-    
-    // Insert newline before 'linkStyle'
-    code = code.replace(Regex("(?i)\\blinkStyle\\b"), "\nlinkStyle")
-    
-    // Insert newline before node shapes: e.g., ID["text"], ID("text"), ID{"text"}, ID(("text")), ID{"text"} etc.
-    code = code.replace(Regex("(?<=.)\\b([a-zA-Z0-9_-]+)\\s*([\\[\\({>])")) { matchResult ->
-        val id = matchResult.groupValues[1]
-        val brace = matchResult.groupValues[2]
-        val isKeyword = id.lowercase() in listOf("graph", "flowchart", "subgraph", "style", "end", "linkstyle", "class", "click", "classdef")
-        if (isKeyword) {
-            matchResult.value
-        } else {
-            "\n$id$brace"
-        }
-    }
-    
-    // Insert newline before connections: e.g., ID -->, ID ---, ID ==>, ID -.->
-    code = code.replace(Regex("(?<=.)\\b([a-zA-Z0-9_-]+)\\s*(?=-->|---|==>|-\\.-|-[^-]*->)")) { matchResult ->
-        val id = matchResult.groupValues[1]
-        val isKeyword = id.lowercase() in listOf("graph", "flowchart", "subgraph", "style", "end", "linkstyle", "class", "click", "classdef")
-        if (isKeyword) {
-            matchResult.value
-        } else {
-            "\n$id"
-        }
-    }
-    
-    // Clean up empty lines or double newlines
-    val formatted = code.lines()
-        .map { it.trim() }
-        .filter { it.isNotEmpty() }
-        .joinToString("\n")
-        
-    return formatted
-}
-
 fun sanitizeMermaid(raw: String): String {
-    val formattedRaw = formatSingleLineMermaid(raw)
-    var code = formattedRaw.trim()
+    var code = raw.trim()
     
-    // Remove triple-backtick wrapping if model put them inside the block
+    // Remove triple-backtick wrapping if present
     if (code.startsWith("```")) {
-        code = code.replace(Regex("^```[a-zA-Z0-9_-]*\\n"), "")
-        code = code.replace(Regex("\\n```$"), "")
+        code = code.replace(Regex("^```[a-zA-Z0-9_-]*\\n?"), "")
+        code = code.replace(Regex("\\n?```$"), "").trim()
     }
     
-    val wrapInQuotes = { content: String ->
-        val trimmed = content.trim()
-        if (trimmed.startsWith("\"") && trimmed.endsWith("\"")) {
-            trimmed
-        } else {
-            "\"" + trimmed.replace("\"", "'") + "\""
+    // Clean HTML entities if any
+    code = code.replace("&lt;", "<")
+               .replace("&gt;", ">")
+               .replace("&quot;", "\"")
+               .replace("&#39;", "'")
+               .replace("&amp;", "&")
+
+    val headers = listOf(
+        "graph TD", "graph LR", "graph BT", "graph RL", "graph",
+        "flowchart TD", "flowchart LR", "flowchart BT", "flowchart RL", "flowchart",
+        "sequenceDiagram", "classDiagram", "stateDiagram", "erDiagram",
+        "gantt", "pie", "gitGraph", "mindmap", "timeline"
+    )
+
+    // Separate diagram header from node statements if on same line
+    for (header in headers) {
+        if (code.startsWith(header, ignoreCase = true) && code.length > header.length && code[header.length] != '\n') {
+            code = header + "\n" + code.substring(header.length).trim()
+            break
+        }
+    }
+
+    val formattedLines = mutableListOf<String>()
+    for (line in code.lines()) {
+        var l = line.trim()
+        if (l.isEmpty()) continue
+        
+        val isHeader = headers.any { l.equals(it, ignoreCase = true) }
+        if (isHeader) {
+            formattedLines.add(l)
+            continue
+        }
+        
+        // Safely split multiple node connections on the same line (e.g. "A-->B B-->C")
+        l = l.replace(Regex("""([\}\]\)\"])\s+([a-zA-Z0-9_-]+)\s*(?:-->|---|==>|-.->|->|\{[\[\(])""")) { m ->
+            "${m.groupValues[1]}\n${m.groupValues[2]} "
+        }
+        
+        for (subLine in l.lines()) {
+            var sub = subLine.trim()
+            if (sub.isEmpty()) continue
+            
+            // Fix double quotes inside double-quoted node labels (e.g., E{"Equilibrium distance("Bond length") ..."})
+            sub = sub.replace(Regex("([\\[\\(\\{]+\\s*\")(.*?)(\"\\s*[\\]\\)\\}]+)")) { m ->
+                val prefix = m.groupValues[1]
+                val body = m.groupValues[2]
+                val suffix = m.groupValues[3]
+                val cleanBody = body.replace("\"", "'")
+                "$prefix$cleanBody$suffix"
+            }
+            
+            formattedLines.add(sub)
         }
     }
     
-    val lines = code.lines().map { line ->
-        var l = line
-        val trimmed = l.trim()
-        
-        // Skip keywords lines entirely or skip processing if it's style, click, etc.
-        val skipKeywords = trimmed.startsWith("subgraph") || 
-                           trimmed.startsWith("click") || 
-                           trimmed.startsWith("style") || 
-                           trimmed.startsWith("classDef") || 
-                           trimmed.startsWith("class") ||
-                           trimmed.startsWith("end") ||
-                           trimmed.startsWith("linkStyle")
-                           
-        if (!skipKeywords) {
-            // 1. Stadium shape: ID([Text]) -> ID(["Text"])
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\(\\[\\s*(.*?)\\s*\\]\\)")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id([${wrapInQuotes(content)}])""")
-            }
-            
-            // 2. Subroutine shape: ID[[Text]] -> ID[["Text"]]
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\[\\[\\s*(.*?)\\s*\\]\\]")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id[[${wrapInQuotes(content)}]]""")
-            }
-            
-            // 3. Cylindrical/database shape: ID[(Text)] -> ID[("Text")]
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\[\\(\\s*(.*?)\\s*\\)\\]")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id[(${wrapInQuotes(content)})]""")
-            }
-            
-            // 4. Double circle: ID((Text)) -> ID(("Text"))
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\(\\(\\s*(.*?)\\s*\\)\\)")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id((${wrapInQuotes(content)}))""")
-            }
-            
-            // 5. Hexagon shape: ID{{Text}} -> ID{{"Text"}}
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\{\\{\\s*(.*?)\\s*\\}\\}")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id{{${wrapInQuotes(content)}}}""")
-            }
-            
-            // 6. Parallelogram / Trapezoid shapes: ID[/Text/], ID[\Text\], ID[/Text\], ID[\Text/]
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\[\\s*([/\\\\])\\s*(.*?)\\s*([/\\\\])\\s*\\]")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val delimStart = matchResult.groupValues[2]
-                val content = matchResult.groupValues[3]
-                val delimEnd = matchResult.groupValues[4]
-                java.util.regex.Matcher.quoteReplacement("""$id[$delimStart${wrapInQuotes(content)}$delimEnd]""")
-            }
-            
-            // 7. Rhombus/Decision shape: ID{Text} -> ID{"Text"}
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\{\\s*(.*?)\\s*\\}")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id{${wrapInQuotes(content)}}""")
-            }
-            
-            // 8. Asymmetric shape: ID>Text] -> ID>"Text"]
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*>\\s*(.*?)\\s*\\]")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id>${wrapInQuotes(content)}]""")
-            }
-            
-            // 9. Standard brackets: ID[Text] -> ID["Text"]
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\[\\s*(.*?)\\s*\\]")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                java.util.regex.Matcher.quoteReplacement("""$id[${wrapInQuotes(content)}]""")
-            }
-            
-            // 10. Simple parentheses: ID(Text) -> ID("Text")
-            l = l.replace(Regex("\\b([a-zA-Z0-9_-]+)\\s*\\(\\s*(.*?)\\s*\\)")) { matchResult ->
-                val id = matchResult.groupValues[1]
-                val content = matchResult.groupValues[2]
-                val isKeyword = id == "subgraph" || id == "click" || id == "style" || id == "classDef" || id == "class" || id == "end" || id == "linkStyle"
-                if (isKeyword) {
-                    matchResult.value
-                } else {
-                    java.util.regex.Matcher.quoteReplacement("""$id(${wrapInQuotes(content)})""")
-                }
-            }
-        } else {
-            // Check if it's a subgraph line with unquoted title containing spaces
-            // E.g. subgraph Venn Diagram for A U B
-            l = l.replace(Regex("(?i)\\bsubgraph\\s+([^\"\\s\\[\\(\\{\\n]+(?:\\s+[^\"\\s\\[\\(\\{\\n]+)+)")) { matchResult ->
-                val content = matchResult.groupValues[1]
-                "subgraph \"$content\""
-            }
-        }
-        
-        l
-    }
-    
-    return lines.joinToString("\n")
+    return formattedLines.joinToString("\n")
 }
 
 fun buildHtmlCodeBlock(language: String, lines: List<String>): String {
